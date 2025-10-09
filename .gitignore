@@ -9,3 +9,4 @@ node_modules/
 .venv/
 source/.env
 source/venv/
+*.pdf
