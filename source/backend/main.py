@@ -40,6 +40,19 @@ class ProcessResponse(BaseModel):
     hints: List[str]
     scores: Dict[str, float]
 
+
+class AnswerRequest(BaseModel):
+    prompt: str = Field(..., min_length=3)
+    model_name: Optional[str] = None
+    max_tokens: int = 256
+    temperature: float = 0.2
+    together_api_key: Optional[str] = None
+    together_base_url: Optional[str] = None
+
+
+class AnswerResponse(BaseModel):
+    answer: str
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -100,3 +113,21 @@ def process(req: ProcessRequest):
     )
 
     return ProcessResponse(answer=answer, hints=hints, scores=scores)
+
+
+@app.post("/answer", response_model=AnswerResponse)
+def answer(req: AnswerRequest):
+    model_name = req.model_name or HINTEVAL_MODEL
+    api_key = req.together_api_key or TOGETHER_API_KEY
+    base_url = req.together_base_url or TOGETHER_BASE_URL
+
+    answer_text = generate_direct_answer(
+        q=req.prompt,
+        api_key=api_key,
+        model=model_name,
+        base_url=base_url,
+        max_tokens=req.max_tokens,
+        temperature=req.temperature,
+    )
+
+    return AnswerResponse(answer=answer_text)
