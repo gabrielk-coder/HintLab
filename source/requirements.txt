@@ -1,0 +1,16 @@
+# Backend
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+requests
+
+# Frontend
+streamlit
+pandas
+altair
+graphviz==0.20.3
+
+torch
+hinteval
+# git+https://github.com/DataScienceUIBK/HintEval.git

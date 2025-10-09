@@ -1,0 +1,21 @@
+Website: HintQA or HintEval
+
+https://rankarena.ngrok.io/ -> RAG retrieval
+three Frames: 
+
+first frame: 
+prompt line: with hinteval (Question is asked) answer gets displayed on the Right (for teacher)
+below: hints from 5-10 max. (remove hints, add hints manually, edit hints)
+also familiarity score (use llama80b)
+
+second frame: 
+user displays Options and those get crossed out (removed) or remain in the list. Candidate answers
+
+
+third frame like totally below the two Frames: 
+Question asked to a Little model (g something 40b)
+
+and adding hints to it so the model learns to give correct answer
+
+
+paper: 17-30 pages with user study conduceted and evluation Report + also insert deployment of websites on server chapter 
