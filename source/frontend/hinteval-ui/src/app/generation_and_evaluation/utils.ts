@@ -21,9 +21,17 @@ export const EXAMPLE_QUESTIONS = [
   "What is the tallest mountain in the world?",
   "Who discovered penicillin?",
   "What is the largest ocean on Earth?",
+  "What is the chemical symbol for Gold?",
+  "Who painted the Mona Lisa?",
+  "What is the powerhouse of the cell?",
+  "Who was the first person to walk on the Moon?",
+  "What is the largest mammal in the world?",
+  "What is the capital of Japan?",
+  "What is the currency of the United Kingdom?",
+  "What is the freezing point of water in Celsius?",
+  "Who wrote the play 'Romeo and Juliet'?"
 ];
 
-// --- TEXT & MATH UTILS ---
 
 export const shortify = (text: string, maxLen: number = 100) => {
   if (!text) return "";

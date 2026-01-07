@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env")
 
+
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "localhost"),
@@ -12,29 +13,28 @@ def get_db_connection():
         password=os.getenv("DB_PASS", "secure_university_password")
     )
 
+
 def init_db() -> None:
     """
-    Initialize PostgreSQL DB with tables.
+    Initialize PostgreSQL DB schema safely.
+    This function is idempotent and can be run multiple times.
     """
     conn = get_db_connection()
-    try:
-        cur = conn.cursor()
+    cur = conn.cursor()
 
+    try:
         # 1) QUESTIONS
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS questions (
                 id SERIAL PRIMARY KEY,
                 text TEXT NOT NULL,
                 session_id TEXT,
                 created_at TEXT NOT NULL
             );
-            """
-        )
+        """)
 
         # 2) ANSWERS
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS answers (
                 id SERIAL PRIMARY KEY,
                 question_id INTEGER NOT NULL,
@@ -44,12 +44,10 @@ def init_db() -> None:
                 updated_at TEXT,
                 FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
             );
-            """
-        )
+        """)
 
-        # 3) HINTS
-        cur.execute(
-            """
+        # 3) HINTS (FIXED TYPO)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS hints (
                 id SERIAL PRIMARY KEY,
                 question_id INTEGER NOT NULL,
@@ -60,12 +58,10 @@ def init_db() -> None:
                 FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE,
                 FOREIGN KEY(answer_id) REFERENCES answers(id) ON DELETE SET NULL
             );
-            """
-        )
+        """)
 
         # 4) METRICS
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS metrics (
                 id SERIAL PRIMARY KEY,
                 hint_id INTEGER NOT NULL,
@@ -74,12 +70,10 @@ def init_db() -> None:
                 metadata_json TEXT,
                 FOREIGN KEY(hint_id) REFERENCES hints(id) ON DELETE CASCADE
             );
-            """
-        )
+        """)
 
         # 5) ENTITIES
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS entities (
                 id SERIAL PRIMARY KEY,
                 hint_id INTEGER NOT NULL,
@@ -90,29 +84,41 @@ def init_db() -> None:
                 metadata_json TEXT,
                 FOREIGN KEY(hint_id) REFERENCES hints(id) ON DELETE CASCADE
             );
-            """
-        )
+        """)
 
-        # 6) CANDIDATE ANSWERS
-        cur.execute(
-            """
+        # 6) CANDIDATE ANSWERS (BASE TABLE)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS candidate_answers (
                 id SERIAL PRIMARY KEY,
                 question_id INTEGER NOT NULL,
                 candidate_text TEXT NOT NULL,
-                is_eliminated INTEGER NOT NULL DEFAULT 0,
+                is_eliminated BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT,
                 FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
             );
-            """
-        )
+        """)
+
+        # 🔁 MIGRATION: add is_groundtruth if missing
+        cur.execute("""
+            ALTER TABLE candidate_answers
+            ADD COLUMN IF NOT EXISTS is_groundtruth BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
+
+        # 🔒 Optional: ensure only ONE ground truth per question
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS unique_groundtruth_per_question
+            ON candidate_answers (question_id)
+            WHERE is_groundtruth = TRUE;
+        """)
 
         conn.commit()
-        print("PostgreSQL tables initialized successfully.")
+        print("✅ PostgreSQL schema initialized / migrated successfully.")
+
     except Exception as e:
-        print(f"Error initializing DB: {e}")
         conn.rollback()
+        print(f"❌ Error initializing DB: {e}")
+
     finally:
         cur.close()
         conn.close()

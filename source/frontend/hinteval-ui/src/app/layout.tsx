@@ -64,7 +64,6 @@ export default function RootLayout({
               <NavLink href="/save_and_load" icon={<Save className="w-4 h-4" />} label="Save / Load" />
             </div>
 
-            {/* Mobile / Compact Menu Placeholder (If needed later) */}
             <div className="md:hidden">
               <span className="text-xs text-slate-500 font-medium">Menu</span>
             </div>
@@ -87,7 +86,6 @@ export default function RootLayout({
             </div>
 
             <div className="flex items-center gap-6">
-              {/* --- NEW GITHUB SECTION --- */}
               <a
                 href="https://github.com/DataScienceUIBK/HintEval" 
                 target="_blank"
@@ -121,7 +119,6 @@ export default function RootLayout({
   );
 }
 
-// Helper component for cleaner navigation links
 function NavLink({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
   return (
     <Link

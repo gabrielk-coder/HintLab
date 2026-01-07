@@ -1,330 +1,405 @@
-import psycopg2
-import json
-import csv
-import io
-import tempfile
 import os
+import io
+import csv
+import json
+import logging
 from datetime import datetime
-from typing import Any, Dict, List
-from hinteval import Dataset
-from hinteval.cores import Subset, Instance
-from .generation_service import generate_only_answer
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import psycopg2
+from psycopg2.extras import Json
+
+logger = logging.getLogger(__name__)
+
+# Fallback for generation service if dependency is missing
+try:
+    from .generation_service import generate_only_answer
+except ImportError:
+    def generate_only_answer(conn, q, m, question_id): 
+        return "Generated Answer Placeholder"
+
+
+# --- Helpers ---
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().isoformat()
+
+def _get_last_question_id(conn, session_id: str) -> Optional[int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM questions WHERE session_id = %s ORDER BY created_at DESC LIMIT 1", 
+            (session_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
 
 
+# --- Session Management ---
 
-def get_current_question_id(conn, session_id: str) -> int | None:
+def clear_session_data(conn, session_id: str) -> Dict[str, Any]:
+    """
+    Deletes all data for a session using CASCADE delete on the Question table.
+    """
     cur = conn.cursor()
-    cur.execute(
-        "SELECT id FROM questions WHERE session_id = %s ORDER BY created_at DESC LIMIT 1", 
-        (session_id,)
-    )
-    row = cur.fetchone()
-    return row[0] if row else None
+    try:
+        # Check existence first for reporting
+        cur.execute("SELECT COUNT(*) FROM questions WHERE session_id = %s", (session_id,))
+        q_count = cur.fetchone()[0]
+        
+        if q_count == 0:
+            return {
+                "cleared": False,
+                "message": "No data found",
+                "counts": {"questions": 0, "answers": 0, "hints": 0, "candidates": 0}
+            }
+        
+        # Gather stats before deletion
+        stats = {}
+        for table in ['answers', 'hints', 'candidate_answers']:
+            cur.execute(f"SELECT COUNT(*) FROM {table} WHERE question_id IN (SELECT id FROM questions WHERE session_id = %s)", (session_id,))
+            stats[table] = cur.fetchone()[0]
+        stats['questions'] = q_count
 
-# ==========================================
-# EXPORT LOGIC (Using hinteval)
-# ==========================================
+        logger.info(f"Clearing session {session_id}: {stats}")
+        
+        # Execute Cascade Delete
+        cur.execute("DELETE FROM questions WHERE session_id = %s", (session_id,))
+        conn.commit()
+        
+        return {
+            "cleared": True,
+            "message": "Session cleared",
+            "counts": stats
+        }
+            
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to clear session: {e}")
+        raise e
+    finally:
+        cur.close()
 
-import psycopg2
-import json
-import tempfile
-import os
-from typing import Dict, Any
-from hinteval import Dataset
-from hinteval.cores import Subset, Instance
+
+# --- Export Logic ---
 
 def export_session_json(conn, session_id: str, full_export: bool = True) -> Dict[str, Any]:
-    qid = get_current_question_id(conn, session_id)
+    """
+    Exports session state. 
+    full_export=True includes Metrics, Entities, and Candidates.
+    """
+    qid = _get_last_question_id(conn, session_id)
+    base_response = {
+        "name": f"session_{session_id}",
+        "subsets": {"export": {"instances": {}}}
+    }
+
     if not qid:
-        return {}
+        return base_response
 
     with conn.cursor() as cur:
+        # Fetch Core Data
         cur.execute("SELECT text FROM questions WHERE id = %s", (qid,))
-        row = cur.fetchone()
-        question_text = row[0] if row else ""
+        q_text = (cur.fetchone() or [""])[0]
 
-        cur.execute("SELECT answer_text FROM answers WHERE question_id = %s LIMIT 1", (qid,))
-        ans_row = cur.fetchone()
-        answers_list = [ans_row[0]] if ans_row else []
-
+        cur.execute("SELECT answer_text, model_name FROM answers WHERE question_id = %s LIMIT 1", (qid,))
+        a_row = cur.fetchone()
+        a_text = a_row[0] if a_row else ""
+        model_name = a_row[1] if a_row and len(a_row) > 1 else None
+        
+        # Fetch Hints
         cur.execute("SELECT id, hint_text FROM hints WHERE question_id = %s ORDER BY id ASC", (qid,))
         hint_rows = cur.fetchall()
-        hints_text_list = [h[1] for h in hint_rows]
 
-        dataset = Dataset(name=f"session_{session_id}")
-        subset = Subset(name="export")
-        instance = Instance.from_strings(
-            question=question_text,
-            answers=answers_list,
-            hints=hints_text_list
-        )
-        subset.add_instance(instance, q_id=str(qid))
-        dataset.add_subset(subset)
+        # Build Instance Object
+        instance_data = {
+            "question": {"question": q_text},
+            "answers": [{"answer": a_text}] if a_text else [],
+            "hints": []
+        }
+        if full_export and model_name:
+            instance_data["model_name"] = model_name
 
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json') as tmp:
-            temp_path = tmp.name
-        
-        try:
-            dataset.store_json(temp_path)
-            with open(temp_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        # Enrich Hints
+        for db_hint_id, hint_text in hint_rows:
+            hint_obj = {"hint": hint_text, "db_id": db_hint_id}
+            
+            if full_export:
+                # Metrics
+                cur.execute("SELECT name, value, metadata_json FROM metrics WHERE hint_id = %s ORDER BY id", (db_hint_id,))
+                metrics = []
+                for name, val, meta in cur.fetchall():
+                    m = {"name": name, "value": val}
+                    if meta: m["metadata"] = json.loads(meta)
+                    metrics.append(m)
+                if metrics: hint_obj["metrics"] = metrics
 
+                # Entities
+                cur.execute("SELECT entity, ent_type, start_index, end_index, metadata_json FROM entities WHERE hint_id = %s ORDER BY id", (db_hint_id,))
+                entities = []
+                for txt, typ, start, end, meta in cur.fetchall():
+                    e = {"text": txt, "type": typ, "start": start, "end": end}
+                    if meta: e["metadata"] = json.loads(meta)
+                    entities.append(e)
+                if entities: hint_obj["entities"] = entities
+            
+            instance_data["hints"].append(hint_obj)
+
+        # Fetch Candidates
         if full_export:
-            try:
-                target_instance = data['subsets']['export']['instances'][str(qid)]
-            except KeyError:
-                return data
-
-            cur.execute("""
-                SELECT candidate_text, is_eliminated, created_at 
-                FROM candidate_answers 
-                WHERE question_id = %s
-            """, (qid,))
+            cur.execute("SELECT candidate_text, is_eliminated, created_at, updated_at FROM candidate_answers WHERE question_id = %s ORDER BY id", (qid,))
+            cands = []
+            for txt, elim, cr, up in cur.fetchall():
+                c = {"text": txt, "is_eliminated": bool(elim), "created_at": cr}
+                if up: c["updated_at"] = up
+                cands.append(c)
             
-            candidates_data = []
-            for c_row in cur.fetchall():
-                candidates_data.append({
-                    "text": c_row[0],
-                    "is_eliminated": bool(c_row[1]),
-                    "created_at": str(c_row[2])
-                })
-            
-            if candidates_data:
-                target_instance['candidates_full'] = candidates_data
-                target_instance['candidates'] = [c['text'] for c in candidates_data]
+            if cands:
+                instance_data["candidates_full"] = cands
+                instance_data["candidates"] = [c["text"] for c in cands]
 
-            json_hints = target_instance.get('hints', [])
-            metrics_by_id = {}
+        base_response["subsets"]["export"]["instances"][str(qid)] = instance_data
+        return base_response
 
-            if len(json_hints) == len(hint_rows):
-                for i, (db_hint_id, db_hint_text) in enumerate(hint_rows):
-                    h_obj = json_hints[i]
-                    h_obj['id'] = db_hint_id
-
-                    cur.execute("""
-                        SELECT name, value, metadata_json 
-                        FROM metrics 
-                        WHERE hint_id = %s
-                    """, (db_hint_id,))
-                    
-                    metric_rows = cur.fetchall()
-                    metrics_dict = {}
-                    
-                    if metric_rows:
-                        h_obj['metrics'] = []
-                        for m_name, m_val, m_meta in metric_rows:
-                            m_entry = {
-                                "name": m_name, 
-                                "value": m_val,
-                                "metadata": json.loads(m_meta) if m_meta else None
-                            }
-                            h_obj['metrics'].append(m_entry)
-                            metrics_dict[m_name] = m_val
-
-                        metrics_by_id[str(db_hint_id)] = metrics_dict
-
-                    try:
-                        cur.execute("""
-                            SELECT entity, ent_type, start_index, end_index, metadata_json 
-                            FROM entities 
-                            WHERE hint_id = %s
-                        """, (db_hint_id,))
-                        
-                        ent_rows = cur.fetchall()
-                        if ent_rows:
-                            h_obj['entities'] = []
-                            for e_text, e_type, e_start, e_end, e_meta in ent_rows:
-                                h_obj['entities'].append({
-                                    "text": e_text,
-                                    "type": e_type,
-                                    "start": e_start,
-                                    "end": e_end,
-                                    "metadata": json.loads(e_meta) if e_meta else None
-                                })
-                    except psycopg2.Error:
-                        conn.rollback()
-
-                target_instance['hints'] = json_hints
-                
-                if metrics_by_id:
-                    target_instance['metricsById'] = metrics_by_id
-
-        return data
 
 def export_session_csv_stream(conn, session_id: str):
-    data_dict = export_session_json(conn, session_id, full_export=False)
+    """Generates a simple CSV stream (type, content) for the session."""
+    data = export_session_json(conn, session_id, full_export=False)
     
-  
-    try:
-        subsets = data_dict.get('subsets', {})
-        export_subset = subsets.get('export', {})
-        instances = export_subset.get('instances', {})
-        first_key = next(iter(instances))
-        instance_data = instances[first_key]
-        
-        q_text = instance_data.get('question', {}).get('question', '')
-        a_text = instance_data.get('answers', [])[0].get('answer', '') if instance_data.get('answers') else ""
-        hints = [h.get('hint', '') for h in instance_data.get('hints', [])]
-        
-    except (StopIteration, AttributeError, KeyError):
-        q_text = ""
-        a_text = ""
-        hints = []
-
     output = io.StringIO()
     writer = csv.writer(output)
-    
     writer.writerow(["type", "content"])
-    if q_text:
-        writer.writerow(["question", q_text])
-    if a_text:
-        writer.writerow(["answer", a_text])
-    for h in hints:
-        writer.writerow(["hint", h])
-        
+
+    try:
+        instances = data.get("subsets", {}).get("export", {}).get("instances", {})
+        if instances:
+            inst = list(instances.values())[0]
+            q = inst.get("question", {}).get("question", "")
+            ans = inst.get("answers", [])
+            a = ans[0].get("answer", "") if ans else ""
+            
+            if q: writer.writerow(["question", q])
+            if a: writer.writerow(["answer", a])
+            for h in inst.get("hints", []):
+                if h.get("hint"): writer.writerow(["hint", h["hint"]])
+    except Exception:
+        pass # Return empty/header-only csv on error
+
     output.seek(0)
     return output
 
-# ==========================================
-# IMPORT LOGIC (Using hinteval)
-# ==========================================
 
-def clear_session_data(conn, session_id: str):
-    cur = conn.cursor()
-    cur.execute("DELETE FROM questions WHERE session_id = %s", (session_id,))
-    conn.commit()
+# --- Import Logic ---
 
-def insert_imported_data(conn, session_id: str, data: Dict[str, Any]):
+def import_session_data(conn, session_id: str, data: Any, format_type: str = "json") -> Dict[str, str]:
     """
-    Parses a hinteval-compliant dictionary (re-serialized to file for loading)
-    and inserts it into the database.
+    Routes import data to the correct handler (CSV, Simple JSON, or Full Backup).
     """
-    cur = conn.cursor()
+    if format_type == "csv":
+        parsed = _parse_csv_to_structure(data)
+        return _insert_simple_structure(conn, session_id, parsed)
+    
+    # Check JSON Structure
+    if _is_full_backup_format(data):
+        return _insert_full_backup(conn, session_id, data)
+    
+    # Default to simple JSON import
+    return _insert_simple_structure(conn, session_id, data)
 
-    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json') as tmp:
-        json.dump(data, tmp)
-        temp_path = tmp.name
 
+def _is_full_backup_format(data: Dict) -> bool:
+    """Checks if JSON contains full backup fields (candidates, metrics, etc)."""
     try:
- 
-        dataset = Dataset.load_json(temp_path)
+        inst = data.get("subsets", {}).get("export", {}).get("instances", {})
+        if not inst: return False
         
-
-        instances = []
-        for subset_name in dataset.subsets:
-            subset = dataset.subsets[subset_name]
-            instances.extend(subset.get_instances())
-            
-        if not instances:
-            raise ValueError("No instances found in the imported Hinteval dataset.")
-
-        inserted_count = 0
+        first = next(iter(inst.values()))
+        if "candidates_full" in first: return True
         
-        for inst in instances:
-       
-            q_text = inst.question.question if hasattr(inst.question, 'question') else str(inst.question)
+        # Check nested hints for metrics
+        hints = first.get("hints", [])
+        if hints and isinstance(hints[0], dict) and ("metrics" in hints[0] or "entities" in hints[0]):
+            return True
             
-            cur.execute(
-                "INSERT INTO questions (text, session_id, created_at) VALUES (%s, %s, %s) RETURNING id",
-                (q_text, session_id, _now())
-            )
-            question_id = cur.fetchone()[0]
+        return False
+    except:
+        return False
 
-            ans_text = ""
-            if inst.answers and len(inst.answers) > 0:
-                first_ans = inst.answers[0]
-                ans_text = first_ans.answer if hasattr(first_ans, 'answer') else str(first_ans)
+
+def _parse_csv_to_structure(csv_bytes: Union[bytes, str]) -> Dict[str, Any]:
+    """Parses CSV content into a dictionary for simple import."""
+    content = csv_bytes.decode('utf-8') if isinstance(csv_bytes, bytes) else csv_bytes
+    reader = csv.DictReader(io.StringIO(content))
+    
+    if reader.fieldnames:
+        reader.fieldnames = [f.strip().lower() for f in reader.fieldnames]
+
+    struct = {"question": "", "answer": "", "hints": []}
+    
+    for row in reader:
+        rtype = row.get("type", "").strip().lower()
+        content = row.get("content", "").strip()
+        if not content: continue
+
+        if rtype == "question": struct["question"] = content
+        elif rtype == "answer": struct["answer"] = content
+        elif rtype == "hint": struct["hints"].append({"hint": content})
             
-            answer_id = None
-            if ans_text:
+    return struct
+
+
+def _insert_simple_structure(conn, session_id: str, data: Dict[str, Any]) -> Dict[str, str]:
+    """Inserts flat JSON/CSV data (Question, Answer, Hints only)."""
+    q_data = data.get("question", "")
+    q_text = q_data.get("question", "") if isinstance(q_data, dict) else q_data
+    
+    a_data = data.get("answer", "")
+    a_text = ""
+    if isinstance(a_data, list) and a_data:
+        a_text = a_data[0].get("answer", "") if isinstance(a_data[0], dict) else str(a_data[0])
+    elif isinstance(a_data, dict):
+        a_text = a_data.get("answer", "")
+    else:
+        a_text = str(a_data)
+
+    if not q_text:
+        raise ValueError("Import failed: Missing question text.")
+
+    cur = conn.cursor()
+    try:
+        qid, aid = _insert_qa_core(cur, conn, session_id, q_text, a_text)
+        
+        count = 0
+        for h in data.get("hints", []):
+            h_text = h.get("hint", h.get("text", "")) if isinstance(h, dict) else str(h)
+            if h_text:
                 cur.execute(
-                    "INSERT INTO answers (question_id, answer_text, created_at) VALUES (%s, %s, %s) RETURNING id",
-                    (question_id, ans_text, _now())
+                    "INSERT INTO hints (question_id, answer_id, hint_text, created_at) VALUES (%s, %s, %s, %s)",
+                    (qid, aid, h_text, _now())
                 )
-                answer_id = cur.fetchone()[0]
-            else:
-                print(f"Import: Answer missing for QID {question_id}, generating...", flush=True)
-                model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-                ans_text = generate_only_answer(conn, q_text, model, question_id=question_id)
-                cur.execute("SELECT id FROM answers WHERE question_id = %s ORDER BY id DESC LIMIT 1", (question_id,))
-                answer_id = cur.fetchone()[0]
-
-            for h_obj in inst.hints:
-                h_text = h_obj.hint if hasattr(h_obj, 'hint') else str(h_obj)
-                
-                if h_text and h_text.strip():
-                    cur.execute(
-                        "INSERT INTO hints (question_id, answer_id, hint_text, created_at) VALUES (%s, %s, %s, %s)",
-                        (question_id, answer_id, h_text.strip(), _now())
-                    )
-                    
-            inserted_count += 1
-
+                count += 1
+        
         conn.commit()
-        return {
-            "info": f"Successfully imported {inserted_count} question(s) from Hinteval dataset.",
-            "generated_answer": None 
-        }
-
+        return {"info": f"Imported: 1 Question, {count} Hints", "question_id": qid}
     except Exception as e:
         conn.rollback()
         raise e
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        cur.close()
 
-def parse_csv_to_dict(content_bytes: bytes) -> Dict[str, Any]:
-    text_stream = io.StringIO(content_bytes.decode('utf-8'))
-    reader = csv.DictReader(text_stream)
-    
-    if reader.fieldnames:
-        reader.fieldnames = [name.strip().lower() for name in reader.fieldnames]
 
-  
-    q_text = ""
-    a_text = ""
-    hints = []
-    
-    for row in reader:
-        r_type = row.get("type", "").strip().lower()
-        content = row.get("content", "").strip()
-        if not content: continue
+def _insert_full_backup(conn, session_id: str, data: Dict[str, Any]) -> Dict[str, str]:
+    """Restores full system state (Metrics, Entities, Candidates)."""
+    cur = conn.cursor()
+    try:
+        instances = {}
+        for subset in data.get("subsets", {}).values():
+            instances.update(subset.get("instances", {}))
 
-        if r_type == "question":
-            q_text = content
-        elif r_type == "answer":
-            a_text = content
-        elif r_type == "hint":
-            hints.append({"hint": content})
+        if not instances: raise ValueError("No instances found in backup")
 
-    instance_obj = {
-        "question": {"question": q_text},
-        "answers": [{"answer": a_text}] if a_text else [],
-        "hints": hints
-    }
-    
-    return {
-        "subsets": {
-            "csv_import": {
-                "instances": {
-                    "imported_1": instance_obj
-                }
-            }
+        counts = {"q": 0, "h": 0, "m": 0, "e": 0, "c": 0}
+        q_ids = []
+
+        for inst_id, content in instances.items():
+            # 1. QA
+            q_raw = content.get("question", {})
+            q_text = q_raw.get("question", "") if isinstance(q_raw, dict) else str(q_raw)
+            
+            ans_list = content.get("answers", [])
+            a_text = ans_list[0].get("answer", "") if ans_list else ""
+            
+            if not q_text: continue
+            
+            qid, aid = _insert_qa_core(cur, conn, session_id, q_text, a_text)
+            q_ids.append(qid)
+            counts["q"] += 1
+
+            # 2. Hints
+            for h in content.get("hints", []):
+                h_text = h.get("hint", "")
+                if not h_text: continue
+
+                cur.execute(
+                    "INSERT INTO hints (question_id, answer_id, hint_text, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+                    (qid, aid, h_text, _now())
+                )
+                hid = cur.fetchone()[0]
+                counts["h"] += 1
+
+                # Metrics
+                for m in h.get("metrics", []):
+                    meta = json.dumps(m.get("metadata")) if m.get("metadata") else None
+                    cur.execute(
+                        "INSERT INTO metrics (hint_id, name, value, metadata_json) VALUES (%s, %s, %s, %s)",
+                        (hid, m["name"], m.get("value"), meta)
+                    )
+                    counts["m"] += 1
+                
+                # Entities
+                for e in h.get("entities", []):
+                    meta = json.dumps(e.get("metadata")) if e.get("metadata") else None
+                    cur.execute(
+                        "INSERT INTO entities (hint_id, entity, ent_type, start_index, end_index, metadata_json) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (hid, e["text"], e["type"], e["start"], e["end"], meta)
+                    )
+                    counts["e"] += 1
+
+            # 3. Candidates
+            for c in content.get("candidates_full", []):
+                cur.execute(
+                    "INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, updated_at) VALUES (%s, %s, %s, %s, %s)",
+                    (qid, c["text"], 1 if c["is_eliminated"] else 0, c.get("created_at", _now()), c.get("updated_at"))
+                )
+                counts["c"] += 1
+
+        conn.commit()
+        return {
+            "info": f"Restored {counts['q']} Questions, {counts['h']} Hints, {counts['c']} Candidates",
+            "question_ids": q_ids,
+            "counts": counts
         }
-    }
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Restore failed: {e}")
+        raise e
+    finally:
+        cur.close()
 
 
+def _insert_hinteval_structure(conn, session_id: str, data: Dict[str, Any]) -> Dict[str, str]:
+    """Alias for full backup insertion if format allows."""
+    return _insert_full_backup(conn, session_id, data)
 
-from datetime import datetime
-from typing import Dict, Any
-import json
 
+def _insert_qa_core(cur, conn, session_id: str, q_text: str, a_text: str) -> Tuple[int, int]:
+    """Helper: Inserts Question. If answer exists, inserts it; otherwise generates it."""
+    # Insert Question
+    cur.execute(
+        "INSERT INTO questions (text, session_id, created_at) VALUES (%s, %s, %s) RETURNING id",
+        (q_text, session_id, _now())
+    )
+    qid = cur.fetchone()[0]
+
+    # Handle Answer
+    if a_text:
+        cur.execute(
+            "INSERT INTO answers (question_id, answer_text, created_at) VALUES (%s, %s, %s) RETURNING id",
+            (qid, a_text, _now())
+        )
+        aid = cur.fetchone()[0]
+    else:
+        logger.info(f"Answer missing for QID {qid}, generating...")
+        conn.commit() # Commit question so generator can read it
+        
+        gen_ans = generate_only_answer(conn, q_text, "meta-llama/Llama-3.3-70B-Instruct-Turbo", question_id=qid)
+        
+        cur.execute(
+            "INSERT INTO answers (question_id, answer_text, model_name, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+            (qid, gen_ans, "meta-llama/Llama-3.3-70B-Instruct-Turbo", _now())
+        )
+        aid = cur.fetchone()[0]
+    
+    return qid, aid
 
 def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
     """
@@ -332,7 +407,6 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
     into the database. It relies on DB to generate IDs and maintains relationships.
     """
     cur = conn.cursor()
-    
     
     try:
         cur.execute(
@@ -380,14 +454,24 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
                     )
 
         candidates = data.get('candidates', [])
-        for c_text in candidates:
-            cur.execute(
-                """
-                INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at) 
-                VALUES (%s, %s, %s, %s)
-                """,
-                (qid, c_text, 0, _now()) 
-            )
+        isgroundtruth_candidate = candidates.get('is_groundtruth_candidate', None)
+        for c_text in candidates.get('candidate_texts', []):
+            if c_text == isgroundtruth_candidate:
+                cur.execute(
+                    """
+                    INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) 
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (qid, c_text, 0, _now(), True) 
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) 
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (qid, c_text, 0, _now(), False) 
+                )
 
         conn.commit()
         return {"status": "success", "question_id": qid}

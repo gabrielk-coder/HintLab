@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict
 class HintevalBase(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
+
+
 class GenerateReq(HintevalBase):
     """Request body for /hinteval/generate."""
     question: str
@@ -26,6 +28,9 @@ class RegenerateAnswerReq(BaseModel):
     model_name: str
     temperature: float = 0.3
     max_tokens: int = 512
+    top_p: float = 0.9
+    hints: List[str] = []
+    question: str
 
 class RegenerateCandidatesReq(BaseModel):
     num_candidates: int
@@ -33,6 +38,7 @@ class RegenerateCandidatesReq(BaseModel):
     temperature: float = 0.3
     max_tokens: int = 256
     hints: List[str] = []
+    top_p: float = 0.9
 
 class HintReq(HintevalBase):
     """Request body for /hinteval/generate."""

@@ -7,7 +7,6 @@ from backend.dependencies import get_or_create_session_id
 from backend.Objects.api_models import HintMetricResponse
 from backend.services import hint_service, entities_service
 
-# All paths start with /metrics
 router = APIRouter(prefix="/metrics", tags=["Metrics"])
 
 @router.get("/get_metrics", response_model=List[HintMetricResponse])

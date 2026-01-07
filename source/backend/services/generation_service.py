@@ -109,19 +109,21 @@ def process_generation(
 
 def generate_only_answer(
     conn,
+    session_id: str,
     question: str,
     model_name: str,
     temperature: float = 0.3,
     max_tokens: int = 512,
     question_id: int = None,
-    hints: Optional[List[str]] = None
+    hints: Optional[List[str]] = None,
+    top_p: float = 0.9
 ) -> str:
     cfg = API_Info(model_name=model_name)
-    answer_text = generate_answer_agnostic(question, max_tokens, temperature, cfg)
+    answer_text = generate_answer_agnostic(question, max_tokens, temperature, top_p, cfg)
     
     if question_id:
         local_insert_answer(conn=conn, question_id=question_id, answer_text=answer_text, model_name=model_name, hints=hints)
-        
+    
     return answer_text
 
 def generate_only_candidates(
@@ -130,7 +132,8 @@ def generate_only_candidates(
     temperature: float,
     model_name: str,
     max_tokens: int,
-    hints: Optional[List[str]] = None
+    hints: Optional[List[str]] = None,
+    top_p: float = 0.9
 ) -> List[str]:
     """Generates candidate answers using LLM."""
     cfg = API_Info(model_name=model_name)
@@ -144,7 +147,7 @@ def generate_only_candidates(
                     {"role": "system", "content": "You generate candidate answers exactly as instructed."},
                     {"role": "user", "content": prompt_candidates(num_candidates, question, max_tokens=max_tokens, hints=hints)},
                 ],
-                stream=False, temperature=temperature, max_tokens=max_tokens, top_p=0.9
+                stream=False, temperature=temperature, max_tokens=max_tokens, top_p=top_p
             )
 
             text = resp.choices[0].message.content.strip()
@@ -161,6 +164,7 @@ def generate_only_candidates(
 
             if len(out) >= num_candidates:
                 return out[:num_candidates]
+            
             elif out:
                 return out 
 
@@ -186,13 +190,23 @@ def new_dataset_instance(question: str, answer: Optional[str] = None) -> Tuple[D
     return ds, inst
 
 
+import re
+
 def my_parse_llm_response(llm_output: str) -> list[str]:
-    hints_output: list[str] = []
+    hints: list[str] = []
 
-    for sentence in llm_output.split('\n'):
-        hints_output.append(sentence)
+    #print("LLM Output:\n", llm_output, flush=True)
 
-    return hints_output
+    for line in llm_output.splitlines():
+        line = line.strip()
+
+        # Matcht: "1. text", "2. text", ...
+        match = re.match(r'^\d+\.\s*(.+)', line)
+        if match:
+            hints.append(match.group(1).strip())
+
+    return hints
+
 
 
 
@@ -207,7 +221,7 @@ def generate_answer_hints(
     answer: bool,
     session_id: Optional[str],
     provided_answer_text: Optional[str] = None, 
-    top_p: float = 1.0,
+    top_p: float = 0.9,
     enable_tqdm: bool = True,
 ) -> Tuple[AnswerOBJ, List[HintOBJ]]:
     
@@ -218,15 +232,15 @@ def generate_answer_hints(
     if provided_answer_text:
          answer_text = provided_answer_text
     elif answer is False:
-         answer_text = generate_answer_agnostic(question, max_tokens=max_tokens, temperature=temperature, cfg=cfg)
+         answer_text = generate_answer_agnostic(question, max_tokens=max_tokens, temperature=temperature,top_p=top_p, cfg=cfg)
     else:
-         answer_text = generate_answer_aware(question, max_tokens=max_tokens, temperature=temperature, cfg=cfg, answer=None)
+         answer_text = generate_answer_aware(question, max_tokens=max_tokens, temperature=temperature, cfg=cfg, top_p=top_p, answer=None)
 
     hint_texts = []
     if num_hints and num_hints > 0:
         if answer is False:
             ds, inst = new_dataset_instance(question)
-
+            print("Generating answer-agnostic hints...", flush=True)
             gen = AnswerAgnostic(
                 model_name=cfg.model_name,
                 api_key=cfg.api_key,
@@ -241,6 +255,7 @@ def generate_answer_hints(
             hint_texts = [h.hint for h in inst.hints if (h.hint or "").strip()]
             gen.release_memory()
         else:
+            print("Generating answer-aware hints...", flush=True)
             dataset, inst = new_dataset_instance(question=question, answer=answer_text)
             gen = AnswerAware(
                 model_name=cfg.model_name,
@@ -250,7 +265,8 @@ def generate_answer_hints(
                 temperature=temperature,
                 top_p=top_p,
                 max_tokens=max_tokens,
-                batch_size=1)
+                batch_size=1,
+                parse_llm_response=my_parse_llm_response)
             gen.generate(dataset["entire"].get_instances())
             hint_texts = [h.hint for h in inst.hints if (h.hint or "").strip()]
             gen.release_memory()
@@ -266,7 +282,7 @@ def generate_answer_hints(
 
     return answer_obj, hint_objs
 
-def generate_answer_agnostic(question: str, max_tokens: int, temperature: float, cfg: API_Info, max_retries: int = 3) -> str:
+def generate_answer_agnostic(question: str, max_tokens: int, temperature: float, top_p: float, cfg: API_Info, max_retries: int = 3) -> str:
     if not question.strip(): return "No question provided."
     client = Together(api_key=cfg.api_key)
     user_prompt = answer_for_answer_agnostic_prompt(question.strip(), max_tokens)
@@ -279,7 +295,7 @@ def generate_answer_agnostic(question: str, max_tokens: int, temperature: float,
                     {"role": "system", "content": "You are a concise assistant. Provide only the answer text."},
                     {"role": "user", "content": user_prompt},
                 ],
-                stream=False, temperature=temperature, max_tokens=max_tokens, top_p=0.9
+                stream=False, temperature=temperature, max_tokens=max_tokens, top_p=top_p
             )
             text = (resp.choices[0].message.content or "").strip()
             if text: return text
@@ -287,7 +303,7 @@ def generate_answer_agnostic(question: str, max_tokens: int, temperature: float,
             print(f"Gen Answer Agnostic Error (Attempt {attempt+1}): {e}",flush=True)
     return "Answer unavailable."
 
-def generate_answer_aware(question: str, max_tokens: int, temperature: float, cfg: API_Info, answer: str = None, max_retries: int = 3) -> str:
+def generate_answer_aware(question: str, max_tokens: int, temperature: float, cfg: API_Info, top_p: float, answer: str = None, max_retries: int = 3) -> str:
     if not question.strip(): return "No question provided."
     client = Together(api_key=cfg.api_key)
     
@@ -302,7 +318,7 @@ def generate_answer_aware(question: str, max_tokens: int, temperature: float, cf
                     {"role": "system", "content": "You are a concise assistant. Provide only the answer text."},
                     {"role": "user", "content": user_prompt},
                 ],
-                stream=False, temperature=temperature, max_tokens=max_tokens, top_p=0.9
+                stream=False, temperature=temperature, max_tokens=max_tokens, top_p=top_p
             )
             text = (resp.choices[0].message.content or "").strip()
             if text: return text

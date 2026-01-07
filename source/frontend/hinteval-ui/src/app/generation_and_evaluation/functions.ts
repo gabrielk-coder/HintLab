@@ -8,7 +8,6 @@ const headers = { "Content-Type": "application/json" };
 const creds: RequestCredentials = "include";
 
 // --- METRIC UTILS ---
-
 export const readMetric = (
   obj: Record<string, any> | undefined,
   key: string
@@ -137,6 +136,7 @@ export const api = {
   // Candidate Management
   getCandidates: async () => {
     const res = await fetch(`${API_BASE}/hinteval/get_candidates`, { credentials: creds });
+    // Expects: { candidates: [{ id: number, text: string, is_groundtruth: boolean }, ...] }
     return res.ok ? res.json() : { candidates: [] };
   },
 
@@ -158,6 +158,13 @@ export const api = {
   deleteAllCandidates: async () => {
     return fetch(`${API_BASE}/hinteval/delete_all_candidates`, {
       method: "POST", headers, credentials: creds, body: JSON.stringify({ candidate_index: -1 })
+    });
+  },
+  
+  // NEW: Swap Ground Truth
+  setCandidateAsGroundTruth: async (index: number) => {
+    return fetch(`${API_BASE}/hinteval/set_ground_truth`, {
+      method: "POST", headers, credentials: creds, body: JSON.stringify({ candidate_index: index })
     });
   },
 
@@ -198,6 +205,7 @@ export const api = {
      return res.json();
   },
   
+  // Load the preset configuration
   loadPreset: async (payload: { data: any }) => {
     const res = await fetch(`${API_BASE}/hinteval/load_preset`, {
       method: "POST",

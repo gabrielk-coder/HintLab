@@ -9,7 +9,6 @@ export default function LandingPage() {
     <div className="bg-[#0f121a] min-h-screen text-slate-50 selection:bg-indigo-500/30">
       <div className="mx-auto max-w-7xl px-6 py-20 space-y-20">
         
-        {/* HERO SECTION */}
         <section className="space-y-6 text-center max-w-3xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-950/40 border border-indigo-500/30 text-indigo-300 text-xs font-bold uppercase tracking-widest mb-4">
             <Brain className="w-3.5 h-3.5" /> AI for Education

@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import json
 import traceback
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -20,7 +20,7 @@ from backend.services.question_service import get_latest_question_id
 from backend.services.candidate_service import get_candidates
 
 # Load Env
-load_dotenv(dotenv_path=".env")
+load_dotenv(dotenv_path="backend/.env")
 
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 TOGETHER_BASE_URL = os.getenv("TOGETHER_BASE_URL", "https://api.together.xyz/v1")
@@ -52,22 +52,12 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def jaccard(a: Set[str], b: Set[str]) -> float:
-    """This function computed jaccard
-
-    Args:
-        a (Set[str]): _description_
-        b (Set[str]): _description_
-
-    Returns:
-        float: _description_
-    """
     if not a and not b: return 1.0
     inter = len(a & b)
     union = len(a | b)
     return inter / union if union > 0 else 0.0
 
 def safe_get(obj, key, default=None):
-    """Helper to safely get attributes from objects or keys from dicts."""
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
@@ -91,20 +81,37 @@ def run_evaluation_and_persist(
     candidates_to_use = []
     candidates_were_generated = False
 
-    if existing_candidates and len(existing_candidates) > 1:
+    if existing_candidates and len(existing_candidates) > 0:
         candidates_to_use = existing_candidates
     else:
         from backend.services.generation_service import generate_only_candidates
-        candidates_to_use = generate_only_candidates(
-            question, num_candidates, temperature, model_name, max_tokens, hints=hints
+        raw_candidates = generate_only_candidates(
+            question=question, num_candidates=num_candidates, temperature=temperature, model_name=model_name, max_tokens=max_tokens, hints=hints,top_p=0.9
         )
         candidates_were_generated = True
+
+        candidates_to_use = []
+        for i, text in enumerate(raw_candidates):
+            is_gt = (i == len(raw_candidates) - 1)
+            candidates_to_use.append({"text": text, "is_groundtruth": is_gt})
+
+    distractors = [c for c in candidates_to_use if not c.get("is_groundtruth")]
+    ground_truths = [c for c in candidates_to_use if c.get("is_groundtruth")]
+    
+    if not ground_truths and distractors:
+        ground_truths = [distractors.pop()]
+
+    distractors.sort(key=lambda x: x["text"])
+    
+    sorted_candidate_objs = distractors + ground_truths
+    
+    candidates_strings_for_eval = [c["text"] for c in sorted_candidate_objs]
 
     results = evaluate_hints(
         question=question,
         hints=hints,
         answer=answer,
-        candidates=candidates_to_use,
+        candidates=candidates_strings_for_eval,
         model_name=model_name,
     )
 
@@ -123,13 +130,13 @@ def run_evaluation_and_persist(
         placeholders = ",".join("%s" for _ in hint_ids)
         cur.execute(f"DELETE FROM metrics WHERE hint_id IN ({placeholders})", tuple(hint_ids))
         cur.execute(f"DELETE FROM entities WHERE hint_id IN ({placeholders})", tuple(hint_ids))
-    
+
     if candidates_were_generated:
         cur.execute("DELETE FROM candidate_answers WHERE question_id = %s", (qid,))
-        for cand in candidates_to_use:
+        for c_obj in sorted_candidate_objs:
             cur.execute(
-                "INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at) VALUES (%s, %s, 0, %s)",
-                (qid, cand, _now())
+                "INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) VALUES (%s, %s, 0, %s, %s)",
+                (qid, c_obj["text"], _now(), c_obj["is_groundtruth"])
             )
     
     conn.commit()
@@ -138,7 +145,6 @@ def run_evaluation_and_persist(
     entities_payload = []
     scores_convergence_payload = []
 
-    
     for i, res in enumerate(results):
         matched_id = None
         
@@ -169,7 +175,8 @@ def run_evaluation_and_persist(
     
     conn.commit()
 
-    final_candidate_list = sorted(candidates_to_use)
+    final_candidate_list = candidates_strings_for_eval
+    
     candidate_convergence = []
     for c in final_candidate_list:
         scores_for_c = []
@@ -217,6 +224,7 @@ def evaluate_hints(
         answers=[answer] if (answer and answer.strip()) else [],
         hints=[h.strip() for h in hints],
     )
+
     instance.question.metadata['candidate_answers-llama-3-70b'] = candidates
     instances = [instance]
     q_h_list = [instance.question] + instance.hints

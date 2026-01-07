@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+
+// Icons
 import {
   BarChart3,
   RotateCcw,
@@ -16,7 +18,11 @@ import {
   GitCommitVertical,
   Tags,
   Network,
+  Lightbulb,
+  SearchCheck,
 } from "lucide-react";
+
+// Charts
 import {
   ResponsiveContainer,
   BarChart,
@@ -30,6 +36,7 @@ import {
   Area,
 } from "recharts";
 
+// UI Components
 import {
   Card,
   CardContent,
@@ -39,12 +46,9 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
-// ------------------------------------------------------------------
-// Configuration & Utils
-// ------------------------------------------------------------------
-
 const API = process.env.NEXT_PUBLIC_HINTEVAL_API ?? "http://localhost:8000";
-const STORAGE_KEY = "hinteval_state_v2_refined";
+// UPDATED KEY
+const STORAGE_KEY = "hinteval_session_v4";
 
 const formatViews = (num: number) => {
   if (!num) return "0";
@@ -96,28 +100,24 @@ function tokenize(text: string | null | undefined): Set<string> {
   if (!text) return new Set();
   const words = text
     .toLowerCase()
-    .replace(/[^\w\s]/g, "")
+    .replace(/[^\w\s]/g, "") // Remove punctuation
     .split(/\s+/)
     .filter((w) => w.length > 0);
   return new Set(words);
 }
 
-function calculateJaccard(textA: string, textB: string): number {
-  const setA = tokenize(textA);
-  const setB = tokenize(textB);
-  if (setA.size === 0 && setB.size === 0) return 1;
-  if (setA.size === 0 || setB.size === 0) return 0;
+function calculateJaccard(setA: Set<string>, setB: Set<string>): number {
+  if (setA.size === 0 && setB.size === 0) return 1; 
+  if (setA.size === 0 || setB.size === 0) return 0; 
+
   let intersection = 0;
-  setA.forEach((word) => {
-    if (setB.has(word)) intersection++;
+  setA.forEach((item) => {
+    if (setB.has(item)) intersection++;
   });
+  
   const union = setA.size + setB.size - intersection;
   return intersection / union;
 }
-
-// ------------------------------------------------------------------
-// Types
-// ------------------------------------------------------------------
 
 interface MetricData {
   id: number;
@@ -134,7 +134,7 @@ interface MetricData {
 interface ConvergenceItem {
   id: number;
   text: string;
-  candidates: Record<string, number>; // 1 = Compatible, 0 = Eliminated
+  candidates: Record<string, number>; 
 }
 
 interface EntityItem {
@@ -145,9 +145,6 @@ interface EntityItem {
   metadata?: string | any;
 }
 
-// ------------------------------------------------------------------
-// Entity Tooltip via Portal
-// ------------------------------------------------------------------
 const EntityWithTooltip = ({
   children,
   type,
@@ -217,9 +214,6 @@ const EntityWithTooltip = ({
   );
 };
 
-// ------------------------------------------------------------------
-// CUSTOM TOOLTIP (Defined Outside Component to prevent Re-renders)
-// ------------------------------------------------------------------
 const CustomAreaTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
@@ -272,26 +266,18 @@ const CustomAreaTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-// ------------------------------------------------------------------
-// Main Component
-// ------------------------------------------------------------------
-
 export default function MetricsPage() {
   const [metricsRaw, setMetricsRaw] = useState<MetricData[]>([]);
   const [convergenceRaw, setConvergenceRaw] = useState<ConvergenceItem[]>([]);
-  const [entitiesRaw, setEntitiesRaw] = useState<Record<number, EntityItem[]>>(
-    {}
-  );
-
+  const [entitiesRaw, setEntitiesRaw] = useState<Record<number, EntityItem[]>>({});
   const [embeddingMatrix, setEmbeddingMatrix] = useState<number[][]>([]);
-
+  
   const [orderedIds, setOrderedIds] = useState<number[]>([]);
   const [idToColorMap, setIdToColorMap] = useState<Record<number, string>>({});
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Load Order AND Colors
   useEffect(() => {
     try {
       if (typeof window !== "undefined") {
@@ -299,9 +285,7 @@ export default function MetricsPage() {
         if (raw) {
           const saved = JSON.parse(raw);
           if (Array.isArray(saved.hints)) {
-            const ids = saved.hints.map((h: any) =>
-              Number(h.hint_id ?? h.id)
-            );
+            const ids = saved.hints.map((h: any) => Number(h.hint_id ?? h.id));
             setOrderedIds(ids);
 
             const colorMap: Record<number, string> = {};
@@ -318,7 +302,6 @@ export default function MetricsPage() {
     }
   }, []);
 
-  // 2. Data Fetching
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -376,7 +359,6 @@ export default function MetricsPage() {
     fetchData();
   }, [fetchData]);
 
-  // 3. Process, Sort & Apply Colors
   const getSortedData = <T extends { id: number }>(data: T[]): T[] => {
     if (!data || data.length === 0) return [];
     if (orderedIds.length === 0) return data;
@@ -415,10 +397,8 @@ export default function MetricsPage() {
     return Array.from(uniqueKeys).sort();
   }, [convergenceRaw]);
 
-  // 4. Analytics Logic & VALIDITY CHECK
   const hasValidMetrics = useMemo(() => {
     if (!metrics || metrics.length === 0) return false;
-
     return metrics.some((m) => {
       const isNum = (val: any) => typeof val === "number" && !isNaN(val);
       return (
@@ -431,7 +411,6 @@ export default function MetricsPage() {
     });
   }, [metrics]);
 
-  // REDUCTION DATA LOGIC
   const reductionData = useMemo(() => {
     if (!convergenceData.length || !allCandidates.length) return [];
 
@@ -471,14 +450,15 @@ export default function MetricsPage() {
     return dataPoints;
   }, [convergenceData, allCandidates]);
 
-  // Calculate Jaccard Matrix (Lexical)
-  const jaccardMatrix = useMemo(() => {
+  const lexicalSimilarityMatrix = useMemo(() => {
     if (!metrics.length) return [];
     const matrix = [];
+    const tokenizedHints = metrics.map(m => tokenize(m.text));
+
     for (let i = 0; i < metrics.length; i++) {
       const row = [];
       for (let j = 0; j < metrics.length; j++) {
-        const score = calculateJaccard(metrics[i].text, metrics[j].text);
+        const score = calculateJaccard(tokenizedHints[i], tokenizedHints[j]);
         row.push(score);
       }
       matrix.push(row);
@@ -486,111 +466,59 @@ export default function MetricsPage() {
     return matrix;
   }, [metrics]);
 
-  // Calculate Removed Similarity Matrix
-  const removedSimilarityMatrix = useMemo(() => {
-    if (!convergenceData.length || allCandidates.length === 0) return [];
+  const eliminationOverlapMatrix = useMemo(() => {
+    if (!convergenceData.length) return [];
+    
+    const eliminatedSets = convergenceData.map((hint) => {
+      const set = new Set<string>();
+      Object.entries(hint.candidates).forEach(([candidate, status]) => {
+        if (status === 0) set.add(candidate);
+      });
+      return set;
+    });
+
     const matrix = [];
-    const totalCandidates = allCandidates.length;
-
-    const eliminatedSets = new Map<number, Set<string>>();
-    convergenceData.forEach((hint) => {
-      const eliminated = new Set<string>();
-      Object.entries(hint.candidates).forEach(([candidate, status]) => {
-        if (status === 0) {
-          eliminated.add(candidate);
-        }
-      });
-      eliminatedSets.set(hint.id, eliminated);
-    });
-
-    const sortedHintIds = convergenceData.map(h => h.id);
-
-    for (let i = 0; i < sortedHintIds.length; i++) {
-      const hintIdA = sortedHintIds[i];
+    for (let i = 0; i < convergenceData.length; i++) {
       const row = [];
-      for (let j = 0; j < sortedHintIds.length; j++) {
-        const hintIdB = sortedHintIds[j];
-
-        if (hintIdA === hintIdB) {
-            row.push(1); 
-            continue;
-        }
-
-        const setA = eliminatedSets.get(hintIdA) || new Set<string>();
-        const setB = eliminatedSets.get(hintIdB) || new Set<string>();
-
-        if (totalCandidates === 0 || (setA.size === 0 && setB.size === 0)) {
+      for (let j = 0; j < convergenceData.length; j++) {
+        if (i === j) {
             row.push(1);
             continue;
         }
-        
-        let intersection = 0;
-        setA.forEach(candidate => {
-            if (setB.has(candidate)) intersection++;
-        });
-        
-        const union = setA.size + setB.size - intersection;
-        const score = union === 0 ? 0 : intersection / union;
-        
+        const score = calculateJaccard(eliminatedSets[i], eliminatedSets[j]);
         row.push(score);
       }
       matrix.push(row);
     }
     return matrix;
-  }, [convergenceData, allCandidates]);
+  }, [convergenceData]);
 
-  // NEW: Calculate Kept Similarity Matrix
-  const keptSimilarityMatrix = useMemo(() => {
-    if (!convergenceData.length || allCandidates.length === 0) return [];
-    const matrix: number[][] = [];
-    const totalCandidates = allCandidates.length;
+  const targetGroupOverlapMatrix = useMemo(() => {
+    if (!convergenceData.length) return [];
 
-    const keptSets = new Map<number, Set<string>>();
-    convergenceData.forEach((hint) => {
-      const kept = new Set<string>();
+    const keptSets = convergenceData.map((hint) => {
+      const set = new Set<string>();
       Object.entries(hint.candidates).forEach(([candidate, status]) => {
-        if (status === 1) { // 1 = Kept/Compatible
-          kept.add(candidate);
-        }
+        if (status === 1) set.add(candidate);
       });
-      keptSets.set(hint.id, kept);
+      return set;
     });
 
-    const sortedHintIds = convergenceData.map(h => h.id);
-
-    for (let i = 0; i < sortedHintIds.length; i++) {
-      const hintIdA = sortedHintIds[i];
-      const row: number[] = [];
-      for (let j = 0; j < sortedHintIds.length; j++) {
-        const hintIdB = sortedHintIds[j];
-
-        if (hintIdA === hintIdB) {
-            row.push(1); 
-            continue;
-        }
-
-        const setA = keptSets.get(hintIdA) || new Set<string>();
-        const setB = keptSets.get(hintIdB) || new Set<string>();
-
-        if (totalCandidates === 0 || (setA.size === 0 && setB.size === 0)) {
+    const matrix = [];
+    for (let i = 0; i < convergenceData.length; i++) {
+      const row = [];
+      for (let j = 0; j < convergenceData.length; j++) {
+        if (i === j) {
             row.push(1);
             continue;
         }
-        
-        let intersection = 0;
-        setA.forEach(candidate => {
-            if (setB.has(candidate)) intersection++;
-        });
-        
-        const union = setA.size + setB.size - intersection;
-        const score = union === 0 ? 1 : intersection / union;
-        
+        const score = calculateJaccard(keptSets[i], keptSets[j]);
         row.push(score);
       }
       matrix.push(row);
     }
     return matrix;
-  }, [convergenceData, allCandidates]);
+  }, [convergenceData]);
 
   const chartData = useMemo(() => {
     const round2 = (num: number | null | undefined) =>
@@ -611,10 +539,6 @@ export default function MetricsPage() {
       };
     });
   }, [metrics]);
-  
-  // ----------------------------------------------------------------
-  // Helper: Entity Highlighting
-  // ----------------------------------------------------------------
 
   const renderHighlightedText = (hintId: number, text: string) => {
     const entities = entitiesRaw[hintId];
@@ -692,9 +616,6 @@ export default function MetricsPage() {
     return <>{elements}</>;
   };
 
-  // ----------------------------------------------------------------
-  // REUSABLE HEATMAP RENDERER
-  // ----------------------------------------------------------------
   const renderHeatmap = (
     matrix: number[][],
     title: string,
@@ -744,12 +665,11 @@ export default function MetricsPage() {
                     </span>
                   </div>
                   {metrics.map((_, colIdx) => {
-                    // Safety check for array bounds
                     const score = matrix[rowIdx]
                       ? matrix[rowIdx][colIdx] || 0
                       : 0;
                     const isDiagonal = rowIdx === colIdx;
-                    const isTopHalf = rowIdx < metrics.length / 2; // Approximation for positioning tooltip
+                    const isTopHalf = rowIdx < metrics.length / 2;
                     const tooltipPosition = isTopHalf
                       ? "top-full mt-2"
                       : "bottom-full mb-2";
@@ -841,10 +761,6 @@ export default function MetricsPage() {
     );
   };
 
-  // ----------------------------------------------------------------
-  // Render
-  // ----------------------------------------------------------------
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">
@@ -901,11 +817,11 @@ export default function MetricsPage() {
           </div>
         )}
 
-        {/* CONTENT */}
         {hasValidMetrics && (
           <div className="space-y-8 animate-in fade-in duration-500">
-            {/* Charts */}
+            {/* --- CHARTS ROW --- */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
               {/* Metric Scores */}
               <Card className="col-span-1 lg:col-span-2 bg-slate-900/50 border-slate-800 backdrop-blur-sm">
                 <CardHeader>
@@ -913,6 +829,9 @@ export default function MetricsPage() {
                     <BarChart3 className="w-5 h-5 text-blue-400" />
                     Metric Scores per Hint
                   </CardTitle>
+                  <CardDescription>
+                    Comparative Analysis of Familiarity, Relevance, and Leakage Avoidance.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="h-[350px]">
                   <ResponsiveContainer width="100%" height="100%">
@@ -968,7 +887,7 @@ export default function MetricsPage() {
                     Answer Space Reduction
                   </CardTitle>
                   <CardDescription>
-                    Candidates remaining after each hint. Hover to see eliminations.
+                    Visualizes the reduction of the candidate pool size. Hover over data points to view specific eliminated candidates.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="h-[300px] overflow-visible">
@@ -1041,8 +960,7 @@ export default function MetricsPage() {
                     Hint Reference
                   </CardTitle>
                   <CardDescription>
-                    Entities extracted from the text are highlighted. Hover for
-                    stats.
+                    Detailed view of hint text with extracted named entities and Wikipedia view statistics.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1100,10 +1018,10 @@ export default function MetricsPage() {
               </Card>
             </div>
 
-            {/* MATRICES SECTION */}
+            {/* --- MATRICES SECTION --- */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
               
-              {/* 1. Elimination Matrix (Stays Full Width on Top) */}
+              {/* 1. Elimination Matrix */}
               {convergenceData.length > 0 && (
                 <Card className="col-span-1 lg:col-span-2 bg-slate-900/50 border-slate-800 backdrop-blur-sm overflow-hidden shadow-xl">
                   <CardHeader className="border-b border-white/5 pb-4 bg-slate-900/80">
@@ -1114,7 +1032,7 @@ export default function MetricsPage() {
                           Elimination Matrix
                         </CardTitle>
                         <CardDescription>
-                          Which candidate is ruled out by which hint.
+                          A detailed grid view indicating the compatibility status (kept vs. eliminated) of every candidate against each hint.
                         </CardDescription>
                       </div>
                       <div className="flex items-center gap-4 text-[10px] uppercase font-bold text-slate-400 bg-slate-950 px-3 py-1.5 rounded-full border border-slate-800">
@@ -1204,47 +1122,43 @@ export default function MetricsPage() {
                 </Card>
               )}
 
-              {/* ROW 2: Removed vs Kept Similarity */}
-              
-              {/* Left: Removed Similarity */}
-              {removedSimilarityMatrix.length > 0 &&
+              {/* 2. Elimination Strategy Overlap */}
+              {eliminationOverlapMatrix.length > 0 &&
                 renderHeatmap(
-                  removedSimilarityMatrix,
-                  "Removed Similarity (Jaccard)",
-                  "Overlap of candidates *eliminated* by hints.",
+                  eliminationOverlapMatrix,
+                  "Elimination Strategy Overlap",
+                  "Shows how much two hints agree on which answers are wrong (based on eliminated candidates).",
                   <Tags className="w-5 h-5 text-fuchsia-400" />,
                   300 // Purple
                 )}
 
-              {/* Right: Kept Similarity (NEW) */}
-              {keptSimilarityMatrix.length > 0 &&
+              {/* 3. Target Group Overlap */}
+              {targetGroupOverlapMatrix.length > 0 &&
                 renderHeatmap(
-                  keptSimilarityMatrix,
-                  "Kept Similarity (Jaccard)",
-                  "Overlap of candidates *kept* (compatible) by hints.",
-                  <RotateCcw className="w-5 h-5 text-emerald-400" />,
+                  targetGroupOverlapMatrix,
+                  "Target Group Overlap",
+                  "Shows how much two hints agree on which answers are still possible (based on compatible candidates).",
+                  <SearchCheck className="w-5 h-5 text-emerald-400" />,
                   150 // Green
                 )}
 
-              {/* ROW 3: Lexical vs Semantic Similarity */}
-
-              {/* Left: Lexical */}
-              {jaccardMatrix.length > 0 &&
+              {/* 4. Shared Vocabulary */}
+              {lexicalSimilarityMatrix.length > 0 &&
                 renderHeatmap(
-                  jaccardMatrix,
-                  "Lexical Similarity (Jaccard)",
-                  "Pairwise word overlap between hint texts.",
+                  lexicalSimilarityMatrix,
+                  "Shared Vocabulary",
+                  "Measures how many words are shared between two hints using Jaccard text similarity.",
                   <GitCommitVertical className="w-5 h-5 text-yellow-400" />,
                   45 // Yellow
                 )}
 
-              {/* Right: Semantic */}
+              {/* 5. Conceptual Similarity */}
               {embeddingMatrix.length > 0 &&
                 renderHeatmap(
                   embeddingMatrix,
-                  "Semantic Similarity (Embeddings)",
-                  "Deep semantic closeness based on vector embeddings.",
-                  <Network className="w-5 h-5 text-blue-400" />,
+                  "Conceptual Similarity",
+                  "Measures how similar the underlying meanings of the hints are using AI embeddings.",
+                  <Lightbulb className="w-5 h-5 text-blue-400" />,
                   220 // Blue
                 )}
             </div>
