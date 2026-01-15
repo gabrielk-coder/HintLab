@@ -67,6 +67,6 @@ def run_frontend():
         pass
 
 if __name__ == "__main__":
-    frontend_thread = threading.Thread(target=run_frontend, daemon=True)
-    frontend_thread.start()
-    uvicorn.run("app:app", host="0.0.0.0", port=8001, reload=True)
+    #frontend_thread = threading.Thread(target=run_frontend, daemon=True)
+    #frontend_thread.start()
+    uvicorn.run("app:app", host="localhost", port=8000, reload=True)

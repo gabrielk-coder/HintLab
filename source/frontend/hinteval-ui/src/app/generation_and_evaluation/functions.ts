@@ -2,7 +2,7 @@ import { Hint, MetricKey, MetricsById } from "./types";
 import { toFiniteNumber, colorWithConvergence } from "./utils";
 
 
-const API_BASE = process.env.NEXT_PUBLIC_HINTEVAL_API ?? "http://localhost:8001";
+const API_BASE = process.env.NEXT_PUBLIC_HINTEVAL_API ?? "http://localhost:8000";
 
 const headers = { "Content-Type": "application/json" };
 const creds: RequestCredentials = "include";

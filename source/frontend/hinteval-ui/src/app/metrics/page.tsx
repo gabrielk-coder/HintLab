@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { useTheme } from "next-themes"; // Recommended for chart theming
+import { useTheme } from "next-themes"; 
 
 // Icons
 import {
@@ -183,7 +183,6 @@ const EntityWithTooltip = ({
       {coords &&
         typeof document !== "undefined" &&
         createPortal(
-          // Changed bg-slate-900 -> bg-popover, text-slate-100 -> text-popover-foreground
           <div
             className="fixed z-[9999] flex flex-col gap-1 w-max min-w-[120px] max-w-[200px] bg-popover text-popover-foreground text-xs rounded shadow-xl border border-border p-2 pointer-events-none animate-in fade-in zoom-in-95 duration-150"
             style={{
@@ -207,7 +206,6 @@ const EntityWithTooltip = ({
               </div>
             )}
 
-            {/* Changed border-t-slate-900 -> border-t-popover */}
             <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-popover"></div>
           </div>,
           document.body
@@ -225,7 +223,6 @@ const CustomAreaTooltip = ({ active, payload, label }: any) => {
     const overflow = eliminated.length - maxDisplay;
 
     return (
-      // Changed bg-slate-950/95 -> bg-popover/95, border-slate-700 -> border-border
       <div className="bg-popover/95 backdrop-blur-md border border-border p-4 rounded-lg shadow-2xl min-w-[220px] max-w-[300px] z-[50]">
         <div className="font-bold text-popover-foreground mb-2 border-b border-border pb-2">
           {label}
@@ -270,7 +267,7 @@ const CustomAreaTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function MetricsPage() {
-  const { theme } = useTheme(); // Use theme hook to detect light/dark
+  const { theme } = useTheme(); 
   const [metricsRaw, setMetricsRaw] = useState<MetricData[]>([]);
   const [convergenceRaw, setConvergenceRaw] = useState<ConvergenceItem[]>([]);
   const [entitiesRaw, setEntitiesRaw] = useState<Record<number, EntityItem[]>>({});
@@ -568,7 +565,6 @@ export default function MetricsPage() {
         );
       }
 
-      // Updated colors to support light/dark modes
       let colorClass = "bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/40";
       if (entity.type === "PERSON")
         colorClass = "bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40";
@@ -767,7 +763,6 @@ export default function MetricsPage() {
   };
 
   if (loading) {
-    // Changed bg-slate-950 -> bg-background, text-slate-400 -> text-muted-foreground
     return (
       <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">
         <div className="flex flex-col items-center gap-4">
@@ -778,16 +773,14 @@ export default function MetricsPage() {
     );
   }
 
-  // Define chart colors based on theme, falling back to grays/defaults if theme is undefined during hydration
   const isDark = theme === 'dark';
-  const gridColor = isDark ? "#1e293b" : "#e2e8f0"; // slate-800 vs slate-200
-  const axisColor = isDark ? "#64748b" : "#94a3b8"; // slate-500 vs slate-400
-  const tooltipBg = isDark ? "#0f172a" : "#ffffff"; // slate-950 vs white
-  const tooltipBorder = isDark ? "#334155" : "#e2e8f0"; // slate-700 vs slate-200
-  const tooltipText = isDark ? "#f8fafc" : "#0f172a"; // slate-50 vs slate-950
+  const gridColor = isDark ? "#1e293b" : "#e2e8f0"; 
+  const axisColor = isDark ? "#64748b" : "#94a3b8"; 
+  const tooltipBg = isDark ? "#0f172a" : "#ffffff"; 
+  const tooltipBorder = isDark ? "#334155" : "#e2e8f0"; 
+  const tooltipText = isDark ? "#f8fafc" : "#0f172a"; 
 
   return (
-    // Changed bg-slate-950 -> bg-background, text-slate-50 -> text-foreground
     <div className="min-h-screen bg-background text-foreground font-sans p-6 md:p-10 pb-20">
       <div className="container mx-auto max-w-[1600px] space-y-8">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-6">
@@ -859,8 +852,16 @@ export default function MetricsPage() {
                         stroke={gridColor}
                         vertical={false}
                       />
-                      <XAxis dataKey="name" stroke={axisColor} tick={{ fontSize: 12 }} />
-                      <YAxis stroke={axisColor} tick={{ fontSize: 12 }} domain={[0, 1]} />
+                      <XAxis 
+                        dataKey="name" 
+                        stroke={axisColor} 
+                        tick={{ fontSize: 12, fontWeight: "bold", fill: axisColor }} 
+                      />
+                      <YAxis 
+                        stroke={axisColor} 
+                        tick={{ fontSize: 12, fontWeight: "bold", fill: axisColor }} 
+                        domain={[0, 1]} 
+                      />
                       <RechartsTooltip
                         cursor={{ fill: gridColor, opacity: 0.4 }}
                         contentStyle={{
@@ -926,28 +927,30 @@ export default function MetricsPage() {
                       <XAxis
                         dataKey="name"
                         stroke={axisColor}
-                        tick={{ fontSize: 12 }}
+                        tick={{ fontSize: 12, fontWeight: "bold", fill: axisColor }}
                         label={{
                           value: "Sequence of Hints",
                           position: "insideBottom",
                           offset: -10,
                           fill: axisColor,
                           fontSize: 12,
+                          fontWeight: "bold",
                         }}
                       />
 
                       <YAxis
                         stroke={axisColor}
-                        tick={{ fontSize: 12 }}
+                        tick={{ fontSize: 12, fontWeight: "bold", fill: axisColor }}
                         allowDecimals={false}
                         label={{
                           value: "Num. of Remaining Candidate Answers",
                           angle: -90,
                           position: "insideLeft",
-                          offset: 0,
+                          offset: 20, 
                           fill: axisColor,
                           fontSize: 12,
                           style: { textAnchor: "middle" },
+                          fontWeight: "bold",
                         }}
                       />
                       
@@ -985,7 +988,6 @@ export default function MetricsPage() {
                       return (
                         <div
                           key={m.id}
-                          // Changed bg-slate-950/50 -> bg-muted/50, border-slate-800 -> border-border
                           className="p-3 rounded-lg bg-muted/50 border border-border flex gap-3 items-start hover:border-muted-foreground transition-colors group"
                         >
                           <span
