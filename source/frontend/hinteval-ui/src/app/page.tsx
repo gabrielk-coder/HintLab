@@ -5,9 +5,8 @@ import { Brain, Layers, ListFilter, Target, ShieldCheck, BookOpen, Search, Eye }
 
 export default function LandingPage() {
   return (
-    // Changed bg-[#0f121a] to bg-background and text-slate-50 to text-foreground
     <div className="bg-background min-h-screen text-foreground selection:bg-primary/30">
-      <div className="mx-auto max-w-7xl px-6 py-20 space-y-20">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-20 space-y-16 sm:space-y-20">
         
       <section className="space-y-6 text-center mx-auto">
         {/* Badge + heading */}
@@ -16,14 +15,13 @@ export default function LandingPage() {
             <Brain className="w-3.5 h-3.5" /> AI for Education
           </div>
 
-          <h1 className="whitespace-nowrap text-5xl sm:text-7xl font-black tracking-tight text-foreground mb-6">
-            Hint Generation and Evaluation
+          <h1 className="text-4xl sm:text-5xl md:text-7xl font-black tracking-tight text-foreground mb-6 break-words max-w-full">
+            Hint Generation <br className="hidden sm:block" /> and Evaluation
           </h1>
         </div>
 
-        {/* Paragraph */}
-        <p className="max-w-3xl mx-auto text-lg sm:text-xl text-muted-foreground leading-relaxed font-light">
-          Design, generate, and mathematically evaluate step-by-step hints for open questions.<br />
+        <p className="max-w-3xl mx-auto text-base sm:text-lg md:text-xl text-muted-foreground leading-relaxed font-light px-2">
+          Design, generate, and mathematically evaluate step-by-step hints for open questions.<br className="hidden sm:block"/>
           Stop guessing and start measuring hint quality.
         </p>
       </section>
@@ -31,7 +29,8 @@ export default function LandingPage() {
 
         {/* WORKFLOW CARDS */}
         <section>
-          <div className="grid gap-8 md:grid-cols-3">
+          {/* Changed: Single column on mobile, 3 columns on desktop */}
+          <div className="grid gap-6 sm:gap-8 grid-cols-1 md:grid-cols-3">
             {[
               { 
                 step: "01", 
@@ -52,7 +51,6 @@ export default function LandingPage() {
                 icon: <ListFilter className="w-6 h-6 text-primary" />
               }
             ].map((item, idx) => (
-              // Changed bg/border colors to semantic vars (bg-card, border-border)
               <Card key={idx} className="group border-border bg-card hover:bg-accent/50 hover:border-primary/50 transition-all duration-300 shadow-xl">
                 <CardContent className="pt-8 px-6 pb-8 space-y-4 relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-4 opacity-10 font-black text-6xl text-muted-foreground select-none group-hover:scale-110 transition-transform">
@@ -77,13 +75,12 @@ export default function LandingPage() {
 
         {/* METRICS SECTION */}
         <section className="space-y-10">
-          <h2 className="text-3xl font-bold text-foreground text-center">
+          <h2 className="text-2xl sm:text-3xl font-bold text-foreground text-center">
             Evaluation Metrics
           </h2>
           
           <div className="flex flex-wrap justify-center gap-6">
             {[
-              // Kept specific colors (emerald/blue/etc) as they signify meaning, but updated background/borders
               { title: "Convergence", val: "0.0 - 1.0", desc: "Measures how strongly the hint steers the learner towards the specific target solution.", icon: <Target className="w-5 h-5" />, color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
               { title: "Leakage", val: "0.0 - 1.0", desc: "Detects if the hint inadvertently gives away the answer too early in the sequence.", icon: <ShieldCheck className="w-5 h-5" />, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
               { title: "Familiarity", val: "0.0 - 1.0", desc: "Estimates if the concepts used are appropriate for the target student's knowledge level.", icon: <BookOpen className="w-5 h-5" />, color: "text-indigo-600 dark:text-indigo-400", bg: "bg-indigo-500/10", border: "border-indigo-500/20" },
@@ -131,10 +128,10 @@ export default function LandingPage() {
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Left: Content */}
             <Card className="border-border bg-card shadow-lg">
-              <CardContent className="p-6 space-y-6">
+              <CardContent className="p-4 sm:p-6 space-y-6">
                 <div>
                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Question</p>
-                  <div className="rounded-lg border border-border bg-secondary/50 px-4 py-3 text-foreground text-lg font-medium">
+                  <div className="rounded-lg border border-border bg-secondary/50 px-4 py-3 text-foreground text-base sm:text-lg font-medium">
                     Which city is the capital of Australia?
                   </div>
                 </div>
@@ -146,8 +143,8 @@ export default function LandingPage() {
                     { text: "It was chosen as a compromise and is inland.", label: "Hint 2" },
                     { text: "The name starts with 'C' and houses Parliament.", label: "Hint 3" }
                   ].map((h, i) => (
-                    <div key={i} className="flex gap-3 items-start p-3 rounded-lg border border-primary/20 bg-primary/5">
-                      <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded uppercase mt-0.5">{h.label}</span>
+                    <div key={i} className="flex flex-col sm:flex-row gap-2 sm:gap-3 items-start p-3 rounded-lg border border-primary/20 bg-primary/5">
+                      <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded uppercase mt-0.5 shrink-0">{h.label}</span>
                       <p className="text-sm text-foreground">{h.text}</p>
                     </div>
                   ))}
@@ -157,8 +154,8 @@ export default function LandingPage() {
 
             {/* Right: Metrics Table */}
             <Card className="border-border bg-card shadow-lg">
-              <CardContent className="p-0 overflow-hidden">
-                <table className="w-full text-sm">
+              <CardContent className="p-0 overflow-x-auto">
+                <table className="w-full text-sm min-w-[400px]">
                   <thead className="bg-secondary border-b border-border">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase">Hint</th>
@@ -183,16 +180,15 @@ export default function LandingPage() {
                     <tr className="hover:bg-secondary/50">
                       <td className="px-4 py-3 font-medium text-foreground">Hint 3</td>
                       <td className="px-4 py-3 font-bold text-emerald-600 dark:text-emerald-400 font-mono">0.92</td>
-                      {/* Red here indicates 'bad' performance (high leakage), distinct from the 'Blue' identity of the metric */}
                       <td className="px-4 py-3 font-bold text-red-600 dark:text-red-400 font-mono">0.62</td>
                       <td className="px-4 py-3 text-purple-600 dark:text-purple-400 font-mono">0.86</td>
                     </tr>
                   </tbody>
                 </table>
-                <div className="p-4 bg-muted/50 text-xs text-muted-foreground italic">
+              </CardContent>
+              <div className="p-4 bg-muted/50 text-xs text-muted-foreground italic border-t border-border">
                   * Note how Hint 3 has high convergence but lower leakage avoidance (it gives away too much).
                 </div>
-              </CardContent>
             </Card>
           </div>
         </section>
@@ -202,7 +198,7 @@ export default function LandingPage() {
           <p className="text-muted-foreground text-sm">
             Ready to evaluate? <a href="/generation_and_evaluation" className="text-primary hover:text-foreground font-bold underline decoration-primary/30 underline-offset-4">Launch Console</a>
           </p>
-          <div className="flex justify-center gap-6 text-xs text-muted-foreground">
+          <div className="flex flex-col sm:flex-row justify-center gap-4 sm:gap-6 text-xs text-muted-foreground">
             <a href="https://github.com/DataScienceUIBK/HintEval" target="_blank" className="hover:text-foreground">GitHub</a>
              <a href="https://hinteval.readthedocs.io" target="_blank" className="hover:text-foreground">Documentation</a>
              <a href="https://arxiv.org/pdf/2502.00857" target="_blank" className="hover:text-foreground">Read the Paper</a>
