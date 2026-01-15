@@ -40,7 +40,7 @@ def save_candidate(conn, session_id: str, text: str, index: Optional[int] = None
 
         cur.execute(
             "INSERT INTO candidate_answers (question_id, candidate_text, created_at, is_groundtruth) VALUES (%s, %s, %s, %s)",
-            (qid, text, _now(), is_gt)
+            (qid, text, _now(), bool(is_gt))
         )
     else:
         cur.execute("SELECT id FROM candidate_answers WHERE question_id = %s ORDER BY id ASC", (qid,))
@@ -143,7 +143,7 @@ def generate_candidates_for_session(
         is_gt = (c == last_candidate)
         cur.execute(
             "INSERT INTO candidate_answers (question_id, candidate_text, created_at, is_groundtruth) VALUES (%s, %s, %s, %s)",
-            (qid, c, _now(), is_gt)
+            (qid, c, _now(), bool(is_gt))
         )
 
     conn.commit()

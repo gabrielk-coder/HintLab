@@ -154,7 +154,7 @@ def run_evaluation_and_persist(
             is_elim = candidate_elimination_map.get(c_obj["text"], 0)
             cur.execute(
                 "INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) VALUES (%s, %s, %s, %s, %s)",
-                (qid, c_obj["text"], is_elim, _now(), c_obj["is_groundtruth"])
+                (qid, c_obj["text"], bool(is_elim), _now(), bool(c_obj["is_groundtruth"]))
             )
     else:
         # If candidates existed, we still need to UPDATE their elimination status based on this new evaluation
@@ -162,7 +162,7 @@ def run_evaluation_and_persist(
             is_elim = candidate_elimination_map.get(c_obj["text"], 0)
             cur.execute(
                 "UPDATE candidate_answers SET is_eliminated = %s WHERE question_id = %s AND candidate_text = %s",
-                (is_elim, qid, c_obj["text"])
+                (bool(is_elim), qid, c_obj["text"])
             )
     
     conn.commit()

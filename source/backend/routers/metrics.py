@@ -7,7 +7,7 @@ from backend.dependencies import get_or_create_session_id
 from backend.Objects.api_models import HintMetricResponse
 from backend.services import hint_service, entities_service
 
-router = APIRouter(prefix="/metrics", tags=["Metrics"])
+router = APIRouter(prefix="/api/metrics", tags=["Metrics"])
 
 @router.get("/get_metrics", response_model=List[HintMetricResponse])
 def get_metrics(request: Request, conn=Depends(get_db)):

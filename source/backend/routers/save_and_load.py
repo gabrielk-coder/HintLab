@@ -9,7 +9,7 @@ from backend.database.connection import get_db
 from backend.dependencies import get_or_create_session_id
 from backend.services import save_and_load_service
 
-router = APIRouter(prefix="/save_and_load", tags=["Save and Load"])
+router = APIRouter(prefix="/api/save_and_load", tags=["Save and Load"])
 logger = logging.getLogger(__name__)
 
 @router.get("/export")

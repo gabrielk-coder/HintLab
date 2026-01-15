@@ -23,7 +23,7 @@ from backend.services import (
     save_and_load_service
 )
 
-router = APIRouter(prefix="/hinteval", tags=["HintEval"])
+router = APIRouter(prefix="/api/hinteval", tags=["HintEval"])
 
 # --- Request Models for new endpoints ---
 class SetGroundTruthReq(BaseModel):

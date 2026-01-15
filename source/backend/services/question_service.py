@@ -57,7 +57,7 @@ def clear_metrics_for_question(conn, question_id: int) -> None:
     
     cur.execute(f"DELETE FROM metrics WHERE hint_id IN ({placeholders})", tuple(hint_ids))
     cur.execute(f"DELETE FROM entities WHERE hint_id IN ({placeholders})", tuple(hint_ids))
-    cur.execute("UPDATE candidate_answers SET is_eliminated = 0 WHERE question_id = %s", (question_id,))    
+    cur.execute("UPDATE candidate_answers SET is_eliminated = FALSE WHERE question_id = %s", (question_id,))    
     conn.commit()
 
 def get_full_session_state(conn, session_id: str) -> Dict[str, Any]:

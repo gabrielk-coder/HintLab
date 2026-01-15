@@ -344,7 +344,7 @@ def _insert_full_backup(conn, session_id: str, data: Dict[str, Any]) -> Dict[str
             for c in content.get("candidates_full", []):
                 cur.execute(
                     "INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, updated_at, is_groundtruth) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (qid, c["text"], 1 if c["is_eliminated"] else 0, c.get("created_at", _now()), c.get("updated_at"), c.get("is_groundtruth", False))
+                    (qid, c["text"], True if bool(c["is_eliminated"]) else False, c.get("created_at", _now()), c.get("updated_at"), bool(c.get("is_groundtruth", False)))
                 )
                 counts["c"] += 1
 
@@ -457,7 +457,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
                     INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) 
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (qid, c_text, 0, _now(), True) 
+                    (qid, c_text, False, _now(), True) 
                 )
             else:
                 cur.execute(
@@ -465,7 +465,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
                     INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) 
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (qid, c_text, 0, _now(), False) 
+                    (qid, c_text, False, _now(), False) 
                 )
 
         conn.commit()

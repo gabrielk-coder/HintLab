@@ -17,5 +17,9 @@ requests
 #Scheduler
 apscheduler
 
+#Database
+postgresql 
+postgresql-contrib
+
 #Framework
 hinteval

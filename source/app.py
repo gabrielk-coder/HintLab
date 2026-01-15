@@ -16,6 +16,12 @@ from backend.database.reset_db import reset_db_logic
 
 FRONTEND_DIR = os.path.join(os.getcwd(), "frontend", "hinteval-ui")
 
+import warnings
+
+# Suppress the Pydantic "protected namespace" warning
+warnings.filterwarnings("ignore", message=".*conflict with protected namespace.*")
+
+
 def reset_db():
     try:
       
