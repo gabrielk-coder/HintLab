@@ -44,6 +44,7 @@ const MODEL_OPTIONS = [
 // --- HELPER COMPONENTS ---
 
 // CardOverlay with Emergency Dismiss
+// Added rounded-xl to match card corners since we removed overflow-hidden from parent
 const CardOverlay = ({ 
     text, 
     subText = "Please wait...", 
@@ -55,11 +56,11 @@ const CardOverlay = ({
     minimal?: boolean; 
     onDismiss?: () => void;
 }) => (
-  <div className="absolute inset-0 z-20 bg-background/95 flex flex-col items-center justify-center rounded-xl border border-border animate-in fade-in duration-200">
+  <div className="absolute inset-0 z-[60] bg-background/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-xl animate-in fade-in duration-300 border border-border/50">
     <div className={`flex flex-col items-center ${minimal ? 'scale-75' : ''} text-center p-6 max-w-[90%]`}>
       <div className="relative mb-4">
         <div className="absolute inset-0 bg-primary/20 rounded-full blur-md animate-pulse"></div>
-        <Loader2 className="w-8 h-8 text-primary animate-spin relative z-10" />
+        <Loader2 className="w-10 h-10 text-primary animate-spin relative z-10" />
       </div>
       
       {text && (
@@ -77,7 +78,7 @@ const CardOverlay = ({
       {onDismiss && (
         <button 
             onClick={(e) => { e.stopPropagation(); onDismiss(); }}
-            className="mt-2 text-[10px] text-red-500 hover:text-red-600 font-semibold underline underline-offset-2 cursor-pointer transition-colors"
+            className="mt-4 px-3 py-1 bg-background/50 border border-destructive/30 rounded-full text-[10px] text-destructive hover:bg-destructive hover:text-white font-semibold cursor-pointer transition-all"
         >
             Stop / Unfreeze UI
         </button>
@@ -86,6 +87,7 @@ const CardOverlay = ({
   </div>
 );
 
+// Updated HelpTip: Uses Fixed positioning on Mobile (Modal style) and Absolute on Desktop
 const HelpTip = ({ title, children, variant = "indigo" }: { title: string, children: React.ReactNode, variant?: "indigo" | "purple" | "emerald" }) => {
   const [open, setOpen] = useState(false);
   const themes = {
@@ -96,29 +98,72 @@ const HelpTip = ({ title, children, variant = "indigo" }: { title: string, child
   const theme = themes[variant];
 
   return (
-    <div className="relative inline-block z-50">
-      <button onClick={() => setOpen(!open)} className={`transition-colors p-1 hover:bg-accent rounded-full ${open ? theme.icon : 'text-muted-foreground hover:text-foreground'}`} title="More Info"><HelpCircle className="w-5 h-5" /></button>
+    <>
+      <button 
+        onClick={() => setOpen(!open)} 
+        className={`relative z-10 transition-colors p-1 hover:bg-accent rounded-full ${open ? theme.icon : 'text-muted-foreground hover:text-foreground'}`} 
+        title="More Info"
+      >
+        <HelpCircle className="w-5 h-5" />
+      </button>
+
       {open && (
         <>
-          <div className="fixed inset-0 z-40 cursor-default" onClick={() => setOpen(false)} />
-          <div className={`absolute right-0 top-9 z-50 w-80 p-0 bg-popover border ${theme.border} rounded-xl shadow-2xl shadow-black/20 animate-in slide-in-from-top-2 overflow-hidden`}>
-            <div className={`px-4 py-3 border-b border-border ${theme.bg} flex items-center gap-2 font-bold ${theme.title}`}><Lightbulb className="w-4 h-4" /> {title}</div>
-            <div className="p-4 text-xs leading-relaxed text-muted-foreground space-y-3">{children}</div>
+          {/* Backdrop for mobile closing */}
+          <div className="fixed inset-0 z-[90] bg-black/20 backdrop-blur-[1px] sm:bg-transparent sm:backdrop-blur-none" onClick={() => setOpen(false)} />
+          
+          {/* Content Container */}
+          <div className={`
+            fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] max-w-sm z-[100]
+            sm:absolute sm:left-auto sm:top-9 sm:right-[-10px] sm:w-80 sm:translate-x-0 sm:translate-y-0
+            p-0 bg-popover border ${theme.border} rounded-xl shadow-2xl shadow-black/20 
+            animate-in fade-in zoom-in-95 sm:slide-in-from-top-2 overflow-hidden
+          `}>
+            <div className={`px-4 py-3 border-b border-border ${theme.bg} flex items-center gap-2 font-bold ${theme.title}`}>
+              <Lightbulb className="w-4 h-4" /> {title}
+            </div>
+            {/* Ensuring text is strictly foreground with solid background */}
+            <div className="p-4 text-xs leading-relaxed text-popover-foreground space-y-3 bg-popover">
+              {children}
+            </div>
           </div>
         </>
       )}
-    </div>
+    </>
   )
 };
 
-const ActionTooltip = ({ text, children }: { text: string, children: React.ReactNode }) => (
-  <div className="group relative flex items-center justify-center">
-    {children}
-    <div className="absolute bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-popover text-popover-foreground text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded border border-border shadow-xl z-50 pointer-events-none animate-in fade-in zoom-in-95 duration-200">
-      {text}<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-popover"></div>
+// Updated Tooltip: Supports alignment to prevent overflow
+const ActionTooltip = ({ 
+  text, 
+  children, 
+  align = "center" 
+}: { 
+  text: string, 
+  children: React.ReactNode, 
+  align?: "center" | "left" | "right" 
+}) => {
+  let positionClass = "left-1/2 -translate-x-1/2"; // default center
+  let arrowClass = "left-1/2 -translate-x-1/2";
+
+  if (align === "right") {
+    positionClass = "right-0 translate-x-0";
+    arrowClass = "right-3 translate-x-0";
+  } else if (align === "left") {
+    positionClass = "left-0 translate-x-0";
+    arrowClass = "left-3 translate-x-0";
+  }
+
+  return (
+    <div className="group relative flex items-center justify-center">
+      {children}
+      <div className={`absolute bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-popover text-popover-foreground text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded border border-border shadow-xl z-[70] pointer-events-none animate-in fade-in zoom-in-95 duration-200 ${positionClass}`}>
+        {text}
+        <div className={`absolute top-full border-4 border-transparent border-t-popover ${arrowClass}`}></div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // --- MAIN APPLICATION COMPONENT ---
 
@@ -791,6 +836,22 @@ const renderMetricsTable = (hint: Hint) => {
     );
   };
 
+  // Determine global loading state text
+  const loadingState = useMemo(() => {
+    if (isGenerating) return { text: "Generating...", subText: "Creating hints & answers" };
+    if (isEvaluating) return { text: "Evaluating...", subText: "Calculating metrics" };
+    if (isRegeneratingAnswer) return { text: "Regenerating...", subText: "Updating answer" };
+    if (isRegeneratingCandidates) return { text: "Regenerating...", subText: "Refreshing candidates" };
+    return null;
+  }, [isGenerating, isEvaluating, isRegeneratingAnswer, isRegeneratingCandidates]);
+
+  const handleGlobalDismiss = () => {
+    setIsGenerating(false);
+    setIsEvaluating(false);
+    setIsRegeneratingAnswer(false);
+    setIsRegeneratingCandidates(false);
+  };
+
   // --- RENDER ---
   return (
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/30 pb-20">
@@ -826,17 +887,17 @@ const renderMetricsTable = (hint: Hint) => {
             {/* --- SECTION: SETUP CARD --- */}
             <div className="lg:col-span-3 space-y-6 relative">
                 
-                <Card className={`bg-card border-border shadow-xl h-full flex flex-col relative overflow-hidden`}>
+                {/* Removed overflow-hidden from Card to allow tooltips to spill out */}
+                <Card className={`bg-card border-border shadow-xl h-full flex flex-col relative`}>
                     
-                    {/* SCOPED OVERLAY - NO GLOBAL LOCKS */}
-                    {(isGenerating || isRegeneratingAnswer) && (
+                    {/* GLOBAL LOCK OVERLAY */}
+                    {isBusy && loadingState && (
                         <CardOverlay 
-                            text={isGenerating ? "Generating..." : "Regenerating..."} 
-                            subText="Processing your request"
-                            onDismiss={() => { setIsGenerating(false); setIsRegeneratingAnswer(false); }}
+                            text={loadingState.text} 
+                            subText={loadingState.subText}
+                            onDismiss={handleGlobalDismiss}
                         />
                     )}
-                    {isEvaluating && <CardOverlay text="" minimal={true} onDismiss={() => setIsEvaluating(false)} />}
 
                     <CardHeader className="pb-4 border-b border-border flex flex-row items-center justify-between">
                         <CardTitle className="text-base font-bold uppercase tracking-wider text-card-foreground flex items-center gap-2">
@@ -848,21 +909,21 @@ const renderMetricsTable = (hint: Hint) => {
                                   <span className="font-bold text-primary-foreground bg-primary w-5 h-5 flex items-center justify-center rounded text-[10px]">1</span>
                                   <div>
                                       <strong className="text-foreground block mb-1">Input Question</strong>
-                                      Type a trivia question or press <kbd className="bg-muted border border-border px-1 py-0.5 rounded text-[10px] text-muted-foreground">TAB</kbd> to auto-fill a demo example.
+                                      <span className="text-foreground">Type a trivia question or press <kbd className="bg-muted border border-border px-1 py-0.5 rounded text-[10px] text-muted-foreground">TAB</kbd> to auto-fill a demo example.</span>
                                   </div>
                               </div>
                               <div className="flex gap-3">
                                   <span className="font-bold text-primary-foreground bg-primary w-5 h-5 flex items-center justify-center rounded text-[10px]">2</span>
                                   <div>
                                       <strong className="text-foreground block mb-1">Configuration</strong>
-                                      Select your LLM and the number of hints (default: 5). Use "Advanced" to tweak creativity (Temperature).
+                                      <span className="text-foreground">Select your LLM and the number of hints (default: 5). Use "Advanced" to tweak creativity (Temperature).</span>
                                   </div>
                               </div>
                               <div className="flex gap-3">
                                   <span className="font-bold text-primary-foreground bg-primary w-5 h-5 flex items-center justify-center rounded text-[10px]">3</span>
                                   <div>
                                       <strong className="text-foreground block mb-1">Generate</strong>
-                                      Click the button to create the hints and the ground truth answer.
+                                      <span className="text-foreground">Click the button to create the hints and the ground truth answer.</span>
                                   </div>
                               </div>
                           </div>
@@ -948,12 +1009,12 @@ const renderMetricsTable = (hint: Hint) => {
                                 <div className="flex items-center gap-1">
                                     {!isEditingAnswer ? (
                                         <>
-                                            <ActionTooltip text="Edit Answer">
+                                            <ActionTooltip text="Edit Answer" align="right">
                                                 <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-background" onClick={() => { setEditedAnswerText(groundTruth); setIsEditingAnswer(true); }} disabled={isBusy}>
                                                     <Pencil className="w-3.5 h-3.5" />
                                                 </Button>
                                             </ActionTooltip>
-                                            <ActionTooltip text="Regenerate Answer">
+                                            <ActionTooltip text="Regenerate Answer" align="right">
                                                 <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10" onClick={handleRegenerateAnswer} disabled={isBusy}>
                                                     <RefreshCw className="w-3.5 h-3.5" />
                                                 </Button>
@@ -981,21 +1042,16 @@ const renderMetricsTable = (hint: Hint) => {
             {/* --- SECTION: HINT POOL --- */}
             <div className="lg:col-span-5 space-y-6 min-w-0 relative">
                 
-                <Card className={`bg-card border-border shadow-xl h-full flex flex-col relative overflow-hidden`}>
+                {/* Removed overflow-hidden */}
+                <Card className={`bg-card border-border shadow-xl h-full flex flex-col relative`}>
                     
-                    {/* SCOPED OVERLAY */}
-                    {isEvaluating && (
+                    {/* GLOBAL LOCK OVERLAY */}
+                    {isBusy && loadingState && (
                         <CardOverlay 
-                            text="Evaluating..." 
-                            subText="Calculating scores..." 
-                            onDismiss={() => setIsEvaluating(false)} 
-                        />
-                    )}
-                    {(isGenerating || isRegeneratingAnswer || isRegeneratingCandidates) && (
-                        <CardOverlay 
-                            text="" 
-                            minimal={true} 
-                            onDismiss={() => { setIsGenerating(false); setIsRegeneratingAnswer(false); setIsRegeneratingCandidates(false); }} 
+                            text={loadingState.text} 
+                            subText={loadingState.subText}
+                            minimal={true}
+                            onDismiss={handleGlobalDismiss}
                         />
                     )}
 
@@ -1013,15 +1069,15 @@ const renderMetricsTable = (hint: Hint) => {
                                 <ul className="space-y-3 marker:text-purple-500 list-disc pl-4">
                                     <li>
                                         <strong className="text-purple-700 dark:text-purple-200">Drag & Drop:</strong><br/>
-                                        Grab the handle <GripVertical className="w-3 h-3 inline text-muted-foreground"/> on any hint to reorder the sequence.
+                                        <span className="text-foreground">Grab the handle <GripVertical className="w-3 h-3 inline text-muted-foreground"/> on any hint to reorder the sequence.</span>
                                     </li>
                                     <li>
                                         <strong className="text-purple-700 dark:text-purple-200">Evaluation:</strong><br/>
-                                        Click <span className="text-white bg-blue-600 px-1 py-0.5 rounded text-[10px]">Run Evaluation</span> to calculate metrics like <em>Convergence</em> (how helpful a hint is) and <em>Leakage</em> (if it gives the answer away).
+                                        <span className="text-foreground">Click <span className="text-white bg-blue-600 px-1 py-0.5 rounded text-[10px]">Run Evaluation</span> to calculate metrics like <em>Convergence</em> (how helpful a hint is) and <em>Leakage</em> (if it gives the answer away).</span>
                                     </li>
                                     <li>
                                         <strong className="text-purple-700 dark:text-purple-200">View Modes:</strong><br/>
-                                        Use <strong>Manual</strong> to reveal hints one-by-one, or <strong>Sequence</strong> to simulate a step-by-step student experience.
+                                        <span className="text-foreground">Use <strong>Manual</strong> to reveal hints one-by-one, or <strong>Sequence</strong> to simulate a step-by-step student experience.</span>
                                     </li>
                                 </ul>
                             </HelpTip>
@@ -1029,7 +1085,7 @@ const renderMetricsTable = (hint: Hint) => {
                                 <button onClick={()=>setElimMode("per-hint")} className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${elimMode==="per-hint"?"bg-background text-foreground shadow-sm border border-border":"text-muted-foreground hover:text-foreground"}`}>Manual</button>
                                 <button onClick={()=>{setElimMode("sequence");setHintStep(0)}} className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${elimMode==="sequence"?"bg-background text-foreground shadow-sm border border-border":"text-muted-foreground hover:text-foreground"}`}>Sequence</button>
                             </div>
-                            <ActionTooltip text="Delete All Hints">
+                            <ActionTooltip text="Delete All Hints" align="right">
                                 <Button variant="ghost" size="icon" onClick={handleDeleteAllHints} disabled={!hints.length} className="h-8 w-8 text-muted-foreground hover:text-red-500 dark:hover:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" /></Button>
                             </ActionTooltip>
                         </div>
@@ -1042,7 +1098,7 @@ const renderMetricsTable = (hint: Hint) => {
                                     <select value={sortMetric} onChange={handleSortMetricChange} className="bg-background text-xs font-bold text-foreground outline-none w-full cursor-pointer hover:bg-muted transition-colors rounded">
                                         {DEFAULT_METRICS.map((k) => (<option key={k} value={k} className="bg-background text-foreground">{k.replace(/-/g, " ")}</option>))}
                                     </select>
-                                    <ActionTooltip text={`Toggle ${sortDir === "desc" ? "Ascending" : "Descending"}`}>
+                                    <ActionTooltip text={`Toggle ${sortDir === "desc" ? "Ascending" : "Descending"}`} align="right">
                                         <button onClick={handleSortDirChange} className="ml-2 text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted">{sortDir === "desc" ? <SortDesc className="w-4 h-4" /> : <SortAsc className="w-4 h-4" />}</button>
                                     </ActionTooltip>
                                 </div>
@@ -1098,20 +1154,16 @@ const renderMetricsTable = (hint: Hint) => {
             {/* --- SECTION: CANDIDATES --- */}
             <div className="lg:col-span-4 space-y-6 min-w-0 relative">
                 
-                <Card className={`bg-card border-border shadow-xl h-full flex flex-col relative overflow-hidden`}>
+                {/* Removed overflow-hidden */}
+                <Card className={`bg-card border-border shadow-xl h-full flex flex-col relative`}>
                     
-                    {/* SCOPED OVERLAY */}
-                    {(isEvaluating || isRegeneratingCandidates) && (
+                    {/* GLOBAL LOCK OVERLAY */}
+                    {isBusy && loadingState && (
                         <CardOverlay 
-                            text={isEvaluating ? "Generating..." : "Regenerating..."} 
-                            onDismiss={() => { setIsEvaluating(false); setIsRegeneratingCandidates(false); }}
-                        />
-                    )}
-                    {(isGenerating || isRegeneratingAnswer) && (
-                        <CardOverlay 
-                            text="" 
-                            minimal={true} 
-                            onDismiss={() => { setIsGenerating(false); setIsRegeneratingAnswer(false); }} 
+                            text={loadingState.text} 
+                            subText={loadingState.subText}
+                            minimal={true}
+                            onDismiss={handleGlobalDismiss}
                         />
                     )}
 
@@ -1119,37 +1171,37 @@ const renderMetricsTable = (hint: Hint) => {
                         <CardTitle className="text-base font-bold uppercase tracking-wider text-card-foreground flex items-center gap-2"><ListFilter className="w-5 h-5 text-emerald-600 dark:text-emerald-500" /> Candidates</CardTitle>
                         <div className="flex items-center gap-2">
                             <HelpTip title="Candidate Logic" variant="emerald">
-                                <p className="mb-3">
+                                <p className="mb-3 text-foreground">
                                     Candidates are potential answers generated by the AI. We track which ones remain valid as hints are revealed.
                                 </p>
-                                <div className="space-y-2 border-t border-white/5 pt-2">
+                                <div className="space-y-2 border-t border-border pt-2">
                                     <div className="flex items-start gap-2">
                                         <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                                         <div>
                                             <strong className="text-emerald-700 dark:text-emerald-200 text-xs">Ground Truth</strong>
-                                            <div className="text-[10px] opacity-80">The correct answer. Click the <Target className="w-3 h-3 inline"/> icon on any candidate to change this.</div>
+                                            <div className="text-[10px] opacity-80 text-foreground">The correct answer. Click the <Target className="w-3 h-3 inline"/> icon on any candidate to change this.</div>
                                         </div>
                                     </div>
                                     <div className="flex items-start gap-2">
                                         <div className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5 font-bold line-through decoration-slate-500 decoration-2">Abc</div>
                                         <div>
                                             <strong className="text-foreground text-xs">Eliminated</strong>
-                                            <div className="text-[10px] opacity-80">This candidate is ruled out by the currently visible hints.</div>
+                                            <div className="text-[10px] opacity-80 text-foreground">This candidate is ruled out by the currently visible hints.</div>
                                         </div>
                                     </div>
                                     <div className="flex items-start gap-2">
                                         <X className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5" />
                                         <div>
                                             <strong className="text-foreground text-xs">Reasoning Trace</strong>
-                                            <div className="text-[10px] opacity-80">Small colored <strong>X</strong> icons indicate exactly <em>which hint</em> caused the elimination.</div>
+                                            <div className="text-[10px] opacity-80 text-foreground">Small colored <strong>X</strong> icons indicate exactly <em>which hint</em> caused the elimination.</div>
                                         </div>
                                     </div>
                                 </div>
                             </HelpTip>
-                            <ActionTooltip text="Regenerate All Candidates">
+                            <ActionTooltip text="Regenerate All Candidates" align="right">
                                 <Button variant="ghost" size="icon" onClick={handleRegenerateCandidates} disabled={!groundTruth || isBusy} className="h-8 w-8 text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10"><RefreshCw className="w-4 h-4" /></Button>
                             </ActionTooltip>
-                            <ActionTooltip text="Delete All Candidates"><Button variant="ghost" size="icon" onClick={handleDeleteAllCandidates} disabled={!candidates.length} className="h-8 w-8 text-muted-foreground hover:text-red-500 dark:hover:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" /></Button></ActionTooltip>
+                            <ActionTooltip text="Delete All Candidates" align="right"><Button variant="ghost" size="icon" onClick={handleDeleteAllCandidates} disabled={!candidates.length} className="h-8 w-8 text-muted-foreground hover:text-red-500 dark:hover:text-red-400 hover:bg-red-500/10"><Trash2 className="w-4 h-4" /></Button></ActionTooltip>
                         </div>
                     </CardHeader>
                     <CardContent className="flex-1 flex flex-col p-0 min-h-[600px]">
@@ -1161,7 +1213,7 @@ const renderMetricsTable = (hint: Hint) => {
                                 const isGT = c.is_groundtruth;
 
                                 return (
-                                    <div key={i} className={`group relative pl-4 pr-3 py-3 rounded-lg transition-all overflow-hidden flex items-center justify-between border ${isGT ? 'bg-emerald-500/10 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.1)]' : 'bg-card border-border hover:border-muted-foreground'}`}>
+                                    <div key={i} className={`group relative pl-4 pr-3 py-3 rounded-lg transition-all overflow-hidden flex items-center justify-between border ${isGT ? 'bg-emerald-500/5 border-2 border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'bg-card border-border hover:border-muted-foreground'}`}>
                                             <div className="flex items-center gap-3 min-w-0 flex-1">
                                                 <button 
                                                     onClick={() => !isGT && handleSetGroundTruth(i)} 
@@ -1172,7 +1224,7 @@ const renderMetricsTable = (hint: Hint) => {
                                                     {isGT ? <CheckCircle2 className="w-4 h-4" /> : <Target className="w-4 h-4" />}
                                                 </button>
 
-                                                <span className={`text-sm truncate transition-all font-medium ${isEliminated ? 'text-muted-foreground opacity-60 decoration-slate-600 line-through' : (isGT ? 'text-emerald-800 dark:text-emerald-100' : 'text-foreground')}`}>
+                                                <span className={`text-sm truncate transition-all font-medium ${isEliminated ? 'text-muted-foreground opacity-60 decoration-slate-600 line-through' : (isGT ? 'text-foreground font-bold' : 'text-foreground')}`}>
                                                     {c.text}
                                                 </span>
                                             </div>

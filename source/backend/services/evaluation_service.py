@@ -86,27 +86,35 @@ def run_evaluation_and_persist(
     else:
         from backend.services.generation_service import generate_only_candidates
         raw_candidates = generate_only_candidates(
-            question=question, num_candidates=num_candidates, temperature=temperature, model_name=model_name, max_tokens=max_tokens, hints=hints,top_p=0.9
+            question=question, num_candidates=num_candidates, temperature=temperature, model_name=model_name, max_tokens=max_tokens, hints=hints, top_p=0.9
         )
         candidates_were_generated = True
 
         candidates_to_use = []
         for i, text in enumerate(raw_candidates):
+            # Ensure text is stripped of whitespace to prevent mismatch keys
+            clean_text = text.strip()
             is_gt = (i == len(raw_candidates) - 1)
-            candidates_to_use.append({"text": text, "is_groundtruth": is_gt})
+            candidates_to_use.append({"text": clean_text, "is_groundtruth": is_gt})
 
+    # --- 1. GUARANTEED ORDERING LOGIC ---
+    # Separate lists ensure we handle Distractors vs GT correctly
     distractors = [c for c in candidates_to_use if not c.get("is_groundtruth")]
     ground_truths = [c for c in candidates_to_use if c.get("is_groundtruth")]
     
+    # Fallback: If no GT exists, force the last distractor to be GT
     if not ground_truths and distractors:
         ground_truths = [distractors.pop()]
 
+    # Sort distractors A-Z for consistency
     distractors.sort(key=lambda x: x["text"])
     
+    # Concatenate: Distractors FIRST, Ground Truth LAST
     sorted_candidate_objs = distractors + ground_truths
     
     candidates_strings_for_eval = [c["text"] for c in sorted_candidate_objs]
 
+    # --- 2. RUN EVALUATION ---
     results = evaluate_hints(
         question=question,
         hints=hints,
@@ -115,6 +123,30 @@ def run_evaluation_and_persist(
         model_name=model_name,
     )
 
+    # --- 3. CONSISTENCY PATCH (Fixing the Convergence Mismatch) ---
+    # We recalculate the metric value based on the scores to ensure they match
+    num_distractors = len(distractors)
+    distractor_texts = set(c["text"] for c in distractors)
+
+    for res in results:
+        res_metrics = res.get("metrics", [])
+        conv_metric = next((m for m in res_metrics if m.get("name") == "convergence"), None)
+        
+        if conv_metric and num_distractors > 0:
+            scores = conv_metric.get("metadata", {}).get("scores", {})
+            
+            # Count exactly how many *distractors* are marked as 0 (eliminated)
+            eliminated_count = 0
+            for dt in distractor_texts:
+                # Check score. Default to 1 (compatible) if missing to be safe.
+                if scores.get(dt) == 0:
+                    eliminated_count += 1
+            
+            # Recalculate: Convergence = Fraction of distractors eliminated
+            new_value = eliminated_count / num_distractors
+            conv_metric["value"] = new_value 
+
+    # --- 4. PERSISTENCE ---
     qid = get_latest_question_id(conn, session_id)
     if not qid:
         return {}
@@ -131,33 +163,27 @@ def run_evaluation_and_persist(
         cur.execute(f"DELETE FROM metrics WHERE hint_id IN ({placeholders})", tuple(hint_ids))
         cur.execute(f"DELETE FROM entities WHERE hint_id IN ({placeholders})", tuple(hint_ids))
 
-  
+    # Map candidate elimination status for DB update
     candidate_elimination_map = {c["text"]: 0 for c in sorted_candidate_objs}
     
     for res in results:
         res_metrics = res.get("metrics", [])
-        # Look for the convergence metric
         conv_metric = next((m for m in res_metrics if m.get("name") == "convergence"), None)
         if conv_metric:
-            # Metadata contains the per-candidate scores: {'Candidate Text': 1.0, ...}
             scores = conv_metric.get("metadata", {}).get("scores", {})
             for cand_text, score in scores.items():
-                # In HintEval, score 0 means incompatible/eliminated
                 if score == 0:
                     candidate_elimination_map[cand_text] = 1
 
-    # --- PERSIST CANDIDATES ---
     if candidates_were_generated:
         cur.execute("DELETE FROM candidate_answers WHERE question_id = %s", (qid,))
         for c_obj in sorted_candidate_objs:
-            # Retrieve calculated status (default to 0 if not found)
             is_elim = candidate_elimination_map.get(c_obj["text"], 0)
             cur.execute(
                 "INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) VALUES (%s, %s, %s, %s, %s)",
                 (qid, c_obj["text"], bool(is_elim), _now(), bool(c_obj["is_groundtruth"]))
             )
     else:
-        # If candidates existed, we still need to UPDATE their elimination status based on this new evaluation
         for c_obj in sorted_candidate_objs:
             is_elim = candidate_elimination_map.get(c_obj["text"], 0)
             cur.execute(
@@ -173,7 +199,6 @@ def run_evaluation_and_persist(
 
     for i, res in enumerate(results):
         matched_id = None
-        
         if i < len(db_hints):
             matched_id = db_hints[i][0]
         

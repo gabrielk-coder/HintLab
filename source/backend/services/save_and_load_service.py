@@ -18,12 +18,10 @@ except ImportError:
         return "Generated Answer Placeholder"
 
 
-# --- Helpers ---
-
-def _now() -> str:
+def get_current_timestamp() -> str:
     return datetime.now().isoformat()
 
-def _get_last_question_id(conn, session_id: str) -> Optional[int]:
+def get_last_question_id(conn, session_id: str) -> Optional[int]:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id FROM questions WHERE session_id = %s ORDER BY created_at DESC LIMIT 1", 
@@ -33,92 +31,45 @@ def _get_last_question_id(conn, session_id: str) -> Optional[int]:
         return row[0] if row else None
 
 
-# --- Session Management ---
-
 def clear_session_data(conn, session_id: str) -> Dict[str, Any]:
-    """
-    Deletes all data for a session using CASCADE delete on the Question table.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT COUNT(*) FROM questions WHERE session_id = %s", (session_id,))
-        q_count = cur.fetchone()[0]
-        
-        if q_count == 0:
-            return {
-                "cleared": False,
-                "message": "No data found",
-                "counts": {"questions": 0, "answers": 0, "hints": 0, "candidates": 0}
-            }
-        
-        stats = {}
-        for table in ['answers', 'hints', 'candidate_answers']:
-            cur.execute(f"SELECT COUNT(*) FROM {table} WHERE question_id IN (SELECT id FROM questions WHERE session_id = %s)", (session_id,))
-            stats[table] = cur.fetchone()[0]
-        stats['questions'] = q_count
-
-        logger.info(f"Clearing session {session_id}: {stats}")
-        
+    with conn.cursor() as cur:
         cur.execute("DELETE FROM questions WHERE session_id = %s", (session_id,))
-        conn.commit()
-        
-        return {
-            "cleared": True,
-            "message": "Session cleared",
-            "counts": stats
-        }
-            
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Failed to clear session: {e}")
-        raise e
-    finally:
-        cur.close()
+    return {"cleared": True, "message": "Session wiped."}
 
-
-# --- Export Logic ---
 
 def export_session_json(conn, session_id: str, full_export: bool = True) -> Dict[str, Any]:
-    """
-    Exports session state. 
-    full_export=True includes Metrics, Entities, and Candidates.
-    """
-    qid = _get_last_question_id(conn, session_id)
-    base_response = {
-        "name": f"session_{session_id}",
-        "subsets": {"export": {"instances": {}}}
-    }
-
+    qid = get_last_question_id(conn, session_id)
+    
+    # Return empty instances structure if no data
     if not qid:
-        return base_response
+        return {"instances": {}}
 
     with conn.cursor() as cur:
-        # Fetch Core Data
+        # 1. Fetch Question
         cur.execute("SELECT text FROM questions WHERE id = %s", (qid,))
         q_text = (cur.fetchone() or [""])[0]
 
+        # 2. Fetch Answer
         cur.execute("SELECT answer_text, model_name FROM answers WHERE question_id = %s LIMIT 1", (qid,))
         a_row = cur.fetchone()
         a_text = a_row[0] if a_row else ""
         model_name = a_row[1] if a_row and len(a_row) > 1 else None
         
-        # Fetch Hints
-        cur.execute("SELECT id, hint_text FROM hints WHERE question_id = %s ORDER BY id ASC", (qid,))
-        hint_rows = cur.fetchall()
-
-        # Build Instance Object
+        # 3. Build Base Structure (Used for BOTH Simple and Full)
         instance_data = {
             "question": {"question": q_text},
             "answers": [{"answer": a_text}] if a_text else [],
             "hints": []
         }
-        if full_export and model_name:
-            instance_data["model_name"] = model_name
 
-        # Hints
+        # 4. Fetch Hints
+        cur.execute("SELECT id, hint_text FROM hints WHERE question_id = %s ORDER BY id ASC", (qid,))
+        hint_rows = cur.fetchall()
+
         for db_hint_id, hint_text in hint_rows:
-            hint_obj = {"hint": hint_text, "db_id": db_hint_id}
+            hint_obj = {"hint": hint_text}
             
+            # ONLY add Metrics/Entities if Full Export is requested
             if full_export:
                 # Metrics
                 cur.execute("SELECT name, value, metadata_json FROM metrics WHERE hint_id = %s ORDER BY id", (db_hint_id,))
@@ -126,7 +77,6 @@ def export_session_json(conn, session_id: str, full_export: bool = True) -> Dict
                 for name, val, meta in cur.fetchall():
                     m = {"name": name, "value": val}
                     if meta: m["metadata"] = json.loads(meta)
-                    else: m["metadata"] = {}
                     metrics.append(m)
                 if metrics: hint_obj["metrics"] = metrics
 
@@ -141,26 +91,30 @@ def export_session_json(conn, session_id: str, full_export: bool = True) -> Dict
             
             instance_data["hints"].append(hint_obj)
 
-        # Fetch Candidates
+        # 5. Add Candidates (ONLY if Full Export)
         if full_export:
+            if model_name:
+                instance_data["model_name"] = model_name
+                
             cur.execute("SELECT candidate_text, is_eliminated, created_at, updated_at, is_groundtruth FROM candidate_answers WHERE question_id = %s ORDER BY id", (qid,))
             cands = []
             for txt, elim, cr, up, is_gt in cur.fetchall():
-                c = {"text": txt, "is_eliminated": bool(elim), "created_at": cr}
+                c = {
+                    "text": txt, 
+                    "is_eliminated": bool(elim), 
+                    "created_at": cr,
+                    "is_groundtruth": bool(is_gt)
+                }
                 if up: c["updated_at"] = up
-                if is_gt is not None: c["is_groundtruth"] = bool(is_gt)
                 cands.append(c)
             
             if cands:
                 instance_data["candidates_full"] = cands
-                instance_data["candidates"] = [c["text"] for c in cands]
 
-        base_response["subsets"]["export"]["instances"][str(qid)] = instance_data
-        return base_response
+        return {"instances": instance_data}
 
 
 def export_session_csv_stream(conn, session_id: str):
-    """Generates a simple CSV stream (type, content) for the session."""
     data = export_session_json(conn, session_id, full_export=False)
     
     output = io.StringIO()
@@ -168,9 +122,8 @@ def export_session_csv_stream(conn, session_id: str):
     writer.writerow(["type", "content"])
 
     try:
-        instances = data.get("subsets", {}).get("export", {}).get("instances", {})
-        if instances:
-            inst = list(instances.values())[0]
+        inst = data.get("instances", {})
+        if inst:
             q = inst.get("question", {}).get("question", "")
             ans = inst.get("answers", [])
             a = ans[0].get("answer", "") if ans else ""
@@ -178,7 +131,8 @@ def export_session_csv_stream(conn, session_id: str):
             if q: writer.writerow(["question", q])
             if a: writer.writerow(["answer", a])
             for h in inst.get("hints", []):
-                if h.get("hint"): writer.writerow(["hint", h["hint"]])
+                h_text = h.get("hint") if isinstance(h, dict) else str(h)
+                if h_text: writer.writerow(["hint", h_text])
     except Exception:
         pass
 
@@ -186,49 +140,87 @@ def export_session_csv_stream(conn, session_id: str):
     return output
 
 
-# --- Import Logic ---
-
-def import_session_data(conn, session_id: str, data: Any, format_type: str = "json") -> Dict[str, str]:
-    """
-    Routes import data to the correct handler (CSV, Simple JSON, or Full Backup).
-    """
-    if format_type == "csv":
-        parsed = _parse_csv_to_structure(data)
-        return _insert_simple_structure(conn, session_id, parsed)
+def import_session_data(conn, session_id: str, data: Any, format_type: str = "json") -> Dict[str, Any]:
+    is_full_backup = False
     
-    if _is_full_backup_format(data):
-        return _insert_full_backup(conn, session_id, data)
+    if format_type == "json":
+        if is_full_backup_format(data):
+            is_full_backup = True
+            validate_full_import_structure(data)
+        elif not is_simple_json_format(data):
+             # Only throw if it matches NEITHER format
+             pass 
     
-    return _insert_simple_structure(conn, session_id, data)
-
-
-def _is_full_backup_format(data: Dict) -> bool:
-    """Checks if JSON contains full backup fields (candidates, metrics, etc)."""
+    logger.info(f"Validation passed. Clearing session {session_id} for import.")
+    
     try:
-        inst = data.get("subsets", {}).get("export", {}).get("instances", {})
-        if not inst: return False
+        clear_stats = clear_session_data(conn, session_id)
         
-        first = next(iter(inst.values()))
-        if "candidates_full" in first: return True
-        
-        # Check nested hints for metrics
-        hints = first.get("hints", [])
-        if hints and isinstance(hints[0], dict) and ("metrics" in hints[0] or "entities" in hints[0]):
-            return True
+        if format_type == "csv":
+            parsed = parse_csv_to_structure(data)
+            result = insert_simple_structure(conn, session_id, parsed, from_csv=True)
+        elif is_full_backup:
+            result = insert_full_backup(conn, session_id, data)
+        else:
+            # Simple JSON Import
+            result = insert_simple_structure(conn, session_id, data, from_csv=False)
             
+        conn.commit()
+        result["cleared"] = clear_stats
+        return result
+        
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Import transaction failed: {e}")
+        raise e
+
+
+def is_full_backup_format(data: Dict) -> bool:
+    """Returns True if data has candidates or metrics inside instances."""
+    try:
+        if "instances" in data:
+            inst = data["instances"]
+            if "candidates_full" in inst:
+                return True
+            # Check for metrics in hints
+            if "hints" in inst and inst["hints"] and "metrics" in inst["hints"][0]:
+                return True
+        return False
+    except:
+        return False
+
+def is_simple_json_format(data: Dict) -> bool:
+    """Returns True if data has the instances wrapper but NO complex data."""
+    try:
+        if "instances" in data:
+            return True
         return False
     except:
         return False
 
 
-def _parse_csv_to_structure(csv_bytes: Union[bytes, str]) -> Dict[str, Any]:
-    """Parses CSV content into a dictionary for simple import."""
+def validate_full_import_structure(data: Dict) -> None:
+    inst = data.get("instances", {})
+    if not inst:
+        raise ValueError("Structure Error: 'instances' object is missing.")
+
+    cands = inst.get("candidates_full", [])
+    if not cands or len(cands) < 2:
+        raise ValueError("Full Backup Error: Must have at least 2 candidates in 'candidates_full'.")
+    
+    gt_count = sum(1 for c in cands if c.get("is_groundtruth") is True)
+    if gt_count != 1:
+        raise ValueError(f"Full Backup Error: Candidates must have exactly one item with 'is_groundtruth': true. Found {gt_count}.")
+
+
+def parse_csv_to_structure(csv_bytes: Union[bytes, str]) -> Dict[str, Any]:
     content = csv_bytes.decode('utf-8') if isinstance(csv_bytes, bytes) else csv_bytes
     reader = csv.DictReader(io.StringIO(content))
     
     if reader.fieldnames:
         reader.fieldnames = [f.strip().lower() for f in reader.fieldnames]
 
+    # CSV returns a flat structure, not the 'instances' wrapper
     struct = {"question": "", "answer": "", "hints": []}
     
     for row in reader:
@@ -243,164 +235,148 @@ def _parse_csv_to_structure(csv_bytes: Union[bytes, str]) -> Dict[str, Any]:
     return struct
 
 
-def _insert_simple_structure(conn, session_id: str, data: Dict[str, Any]) -> Dict[str, str]:
-    """Inserts flat JSON/CSV data (Question, Answer, Hints only)."""
-    q_data = data.get("question", "")
-    q_text = q_data.get("question", "") if isinstance(q_data, dict) else q_data
+def insert_simple_structure(conn, session_id: str, data: Dict[str, Any], from_csv: bool = False) -> Dict[str, Any]:
+    """
+    Inserts data. 
+    If from_csv=True, expects flat dict: {question: "...", hints: []}
+    If from_csv=False, expects wrapper: {instances: {question: {...}, hints: [...]}}
+    """
     
-    a_data = data.get("answer", "")
-    a_text = ""
-    if isinstance(a_data, list) and a_data:
-        a_text = a_data[0].get("answer", "") if isinstance(a_data[0], dict) else str(a_data[0])
-    elif isinstance(a_data, dict):
-        a_text = a_data.get("answer", "")
+    if from_csv:
+        content = data
+        q_text = content.get("question", "")
+        a_text = content.get("answer", "")
+        hints_list = content.get("hints", [])
     else:
-        a_text = str(a_data)
+        content = data.get("instances", {})
+        if not content:
+             raise ValueError("Invalid Simple JSON: Missing 'instances' key.")
+             
+        q_raw = content.get("question", {})
+        q_text = q_raw.get("question", "") if isinstance(q_raw, dict) else str(q_raw)
+        
+        ans_list = content.get("answers", [])
+        a_text = ""
+        if ans_list:
+            a_text = ans_list[0].get("answer", "") if isinstance(ans_list[0], dict) else str(ans_list[0])
+            
+        hints_list = content.get("hints", [])
 
     if not q_text:
         raise ValueError("Import failed: Missing question text.")
 
     cur = conn.cursor()
-    try:
-        qid, aid = _insert_qa_core(cur, conn, session_id, q_text, a_text)
+    qid, aid = insert_qa_core(cur, conn, session_id, q_text, a_text)
+    
+    count = 0
+    for h in hints_list:
+        h_text = h.get("hint", "") if isinstance(h, dict) else str(h)
         
-        count = 0
-        for h in data.get("hints", []):
-            h_text = h.get("hint", h.get("text", "")) if isinstance(h, dict) else str(h)
-            if h_text:
-                cur.execute(
-                    "INSERT INTO hints (question_id, answer_id, hint_text, created_at) VALUES (%s, %s, %s, %s)",
-                    (qid, aid, h_text, _now())
-                )
-                count += 1
-        
-        conn.commit()
-        return {"info": f"Imported: 1 Question, {count} Hints", "question_id": qid}
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        cur.close()
+        if h_text:
+            cur.execute(
+                "INSERT INTO hints (question_id, answer_id, hint_text, created_at) VALUES (%s, %s, %s, %s)",
+                (qid, aid, h_text, get_current_timestamp())
+            )
+            count += 1
+    
+    return {"info": f"Imported: 1 Question, {count} Hints", "question_id": qid, "counts": {"q": 1, "h": count}}
 
 
-def _insert_full_backup(conn, session_id: str, data: Dict[str, Any]) -> Dict[str, str]:
-    """Restores full system state (Metrics, Entities, Candidates)."""
+def insert_full_backup(conn, session_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     cur = conn.cursor()
-    try:
-        instances = {}
-        for subset in data.get("subsets", {}).values():
-            instances.update(subset.get("instances", {}))
+    content = data.get("instances", {})
 
-        if not instances: raise ValueError("No instances found in backup")
+    counts = {"q": 0, "h": 0, "m": 0, "e": 0, "c": 0}
+    q_ids = []
 
-        counts = {"q": 0, "h": 0, "m": 0, "e": 0, "c": 0}
-        q_ids = []
+    q_raw = content.get("question", {})
+    q_text = q_raw.get("question", "") if isinstance(q_raw, dict) else str(q_raw)
+    
+    ans_list = content.get("answers", [])
+    a_text = ans_list[0].get("answer", "") if ans_list else ""
+    
+    if not q_text:
+        raise ValueError("Missing question text in backup.")
+    
+    qid, aid = insert_qa_core(cur, conn, session_id, q_text, a_text)
+    q_ids.append(qid)
+    counts["q"] += 1
 
-        for inst_id, content in instances.items():
-            # QA
-            q_raw = content.get("question", {})
-            q_text = q_raw.get("question", "") if isinstance(q_raw, dict) else str(q_raw)
-            
-            ans_list = content.get("answers", [])
-            a_text = ans_list[0].get("answer", "") if ans_list else ""
-            
-            if not q_text: continue
-            
-            qid, aid = _insert_qa_core(cur, conn, session_id, q_text, a_text)
-            q_ids.append(qid)
-            counts["q"] += 1
+    for c in content.get("candidates_full", []):
+        cur.execute(
+            """INSERT INTO candidate_answers 
+                (question_id, candidate_text, is_eliminated, created_at, updated_at, is_groundtruth) 
+                VALUES (%s, %s, %s, %s, %s, %s)""",
+            (qid, c["text"], bool(c.get("is_eliminated", False)), c.get("created_at", get_current_timestamp()), c.get("updated_at"), bool(c.get("is_groundtruth", False)))
+        )
+        counts["c"] += 1
 
-            # Hints
-            for h in content.get("hints", []):
-                h_text = h.get("hint", "")
-                if not h_text: continue
+    for h in content.get("hints", []):
+        h_text = h.get("hint", "")
+        if not h_text: continue
 
-                cur.execute(
-                    "INSERT INTO hints (question_id, answer_id, hint_text, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
-                    (qid, aid, h_text, _now())
-                )
-                hid = cur.fetchone()[0]
-                counts["h"] += 1
+        cur.execute(
+            "INSERT INTO hints (question_id, answer_id, hint_text, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+            (qid, aid, h_text, get_current_timestamp())
+        )
+        hid = cur.fetchone()[0]
+        counts["h"] += 1
 
-                # Metrics
-                for m in h.get("metrics", []):
-                    meta = json.dumps(m.get("metadata")) if m.get("metadata") else None
-                    cur.execute(
-                        "INSERT INTO metrics (hint_id, name, value, metadata_json) VALUES (%s, %s, %s, %s)",
-                        (hid, m["name"], m.get("value"), meta)
-                    )
-                    counts["m"] += 1
-                
-                # Entities
-                for e in h.get("entities", []):
-                    meta = json.dumps(e.get("metadata")) if e.get("metadata") else None
-                    cur.execute(
-                        "INSERT INTO entities (hint_id, entity, ent_type, start_index, end_index, metadata_json) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (hid, e["text"], e["type"], e["start"], e["end"], meta)
-                    )
-                    counts["e"] += 1
+        for m in h.get("metrics", []):
+            meta = json.dumps(m.get("metadata")) if m.get("metadata") else None
+            cur.execute(
+                "INSERT INTO metrics (hint_id, name, value, metadata_json) VALUES (%s, %s, %s, %s)",
+                (hid, m["name"], m.get("value"), meta)
+            )
+            counts["m"] += 1
+        
+        for e in h.get("entities", []):
+            meta = json.dumps(e.get("metadata")) if e.get("metadata") else None
+            cur.execute(
+                "INSERT INTO entities (hint_id, entity, ent_type, start_index, end_index, metadata_json) VALUES (%s, %s, %s, %s, %s, %s)",
+                (hid, e["text"], e["type"], e["start"], e["end"], meta)
+            )
+            counts["e"] += 1
 
-            # Candidates
-            for c in content.get("candidates_full", []):
-                cur.execute(
-                    "INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, updated_at, is_groundtruth) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (qid, c["text"], True if bool(c["is_eliminated"]) else False, c.get("created_at", _now()), c.get("updated_at"), bool(c.get("is_groundtruth", False)))
-                )
-                counts["c"] += 1
-
-        conn.commit()
-        return {
-            "info": f"Restored {counts['q']} Questions, {counts['h']} Hints, {counts['c']} Candidates",
-            "question_ids": q_ids,
-            "counts": counts
-        }
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Restore failed: {e}")
-        raise e
-    finally:
-        cur.close()
+    return {
+        "info": f"Restored {counts['q']} Questions, {counts['h']} Hints, {counts['c']} Candidates",
+        "question_ids": q_ids,
+        "counts": counts
+    }
 
 
-def _insert_hinteval_structure(conn, session_id: str, data: Dict[str, Any]) -> Dict[str, str]:
-    """Alias for full backup insertion if format allows."""
-    return _insert_full_backup(conn, session_id, data)
-
-
-def _insert_qa_core(cur, conn, session_id: str, q_text: str, a_text: str) -> Tuple[int, int]:
-    """Helper: Inserts Question. If answer exists, inserts it; otherwise generates it."""
-    # Insert Question
+def insert_qa_core(cur, conn, session_id: str, q_text: str, a_text: str) -> Tuple[int, int]:
     cur.execute(
         "INSERT INTO questions (text, session_id, created_at) VALUES (%s, %s, %s) RETURNING id",
-        (q_text, session_id, _now())
+        (q_text, session_id, get_current_timestamp())
     )
     qid = cur.fetchone()[0]
 
     if a_text:
         cur.execute(
             "INSERT INTO answers (question_id, answer_text, created_at) VALUES (%s, %s, %s) RETURNING id",
-            (qid, a_text, _now())
+            (qid, a_text, get_current_timestamp())
         )
         aid = cur.fetchone()[0]
     else:
         logger.info(f"Answer missing for QID {qid}, generating...")
-        conn.commit()
         
-        gen_ans = generate_only_answer(conn, q_text, "meta-llama/Llama-3.3-70B-Instruct-Turbo", question_id=qid)
+        try:
+            gen_ans = generate_only_answer(conn, q_text, "meta-llama/Llama-3.3-70B-Instruct-Turbo", question_id=qid)
+        except Exception as e:
+            logger.error(f"LLM Generation failed for QID {qid}: {e}")
+            gen_ans = "[Error: Generation Failed]"
         
         cur.execute(
             "INSERT INTO answers (question_id, answer_text, model_name, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
-            (qid, gen_ans, "meta-llama/Llama-3.3-70B-Instruct-Turbo", _now())
+            (qid, gen_ans, "meta-llama/Llama-3.3-70B-Instruct-Turbo", get_current_timestamp())
         )
         aid = cur.fetchone()[0]
     
     return qid, aid
 
+
 def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
-    """
-    Inserts a full pre-computed state (Q, A, Hints, Candidates, Metrics) 
-    into the database. It relies on DB to generate IDs and maintains relationships.
-    """
     cur = conn.cursor()
     
     try:
@@ -410,7 +386,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
             VALUES (%s, %s, %s) 
             RETURNING id
             """, 
-            (data['question'], session_id, _now())
+            (data['question'], session_id, get_current_timestamp())
         )
         qid = cur.fetchone()[0]
         
@@ -420,7 +396,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
             VALUES (%s, %s, %s) 
             RETURNING id
             """, 
-            (qid, data['groundTruth'], _now())
+            (qid, data['groundTruth'], get_current_timestamp())
         )
         aid = cur.fetchone()[0]
 
@@ -431,7 +407,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
                 VALUES (%s, %s, %s, %s) 
                 RETURNING id
                 """,
-                (qid, aid, h['hint_text'], _now())
+                (qid, aid, h['hint_text'], get_current_timestamp())
             )
             real_hint_id = cur.fetchone()[0]
             
@@ -457,7 +433,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
                     INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) 
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (qid, c_text, False, _now(), True) 
+                    (qid, c_text, False, get_current_timestamp(), True) 
                 )
             else:
                 cur.execute(
@@ -465,7 +441,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
                     INSERT INTO candidate_answers (question_id, candidate_text, is_eliminated, created_at, is_groundtruth) 
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (qid, c_text, False, _now(), False) 
+                    (qid, c_text, False, get_current_timestamp(), False) 
                 )
 
         conn.commit()
@@ -473,7 +449,7 @@ def load_full_preset_state(conn, session_id: str, data: Dict[str, Any]):
 
     except Exception as e:
         conn.rollback()
-        print(f"Error loading preset: {e}")
+        logger.error(f"Error loading preset: {e}")
         raise e
     finally:
         cur.close()
