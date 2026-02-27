@@ -1,1 +1,2 @@
-# Website_for_HintEval
+# HintLab -  Hint Generation and Evaluation Website
+
