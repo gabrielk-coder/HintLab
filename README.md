@@ -18,7 +18,7 @@
 
 ## 📖 Overview
 
-**HINTLAB** is a comprehensive framework designed for the generation and systematic evaluation of hints. The goal of this system is to provide a standardized environment where users can generate hints using various strategies (based on the HintEval dataset), analyze their structure, and evaluate their effectiveness, quality, and pedagogical value.
+**HINTLAB** is a comprehensive tool designed for the generation and systematic evaluation of hints. The goal of this system is to provide a standardized environment where users can generate hints using various strategies (based on the HintEval framework), analyze their structure, and evaluate their effectiveness, quality, and pedagogical value.
 
 ---
 
